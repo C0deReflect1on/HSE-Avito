@@ -1,5 +1,3 @@
-
-
 def main():
     pushed = input().split()
     poped = input().split()
