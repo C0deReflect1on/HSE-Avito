@@ -1,5 +1,5 @@
 import pytest
-from task_1 import main
+from main import main
 
 @pytest.mark.parametrize("pushed,poped,expected", [
     (["1","2","3"], ["2","1","3"], True),
