@@ -5,7 +5,7 @@ class LinkedList:
     def __init__(self, value: int):
         self.value = value
         self.next: Optional[LinkedList] = None
-    
+
     def view(self):
         head = self
         l = []
@@ -68,7 +68,6 @@ def main():
     curr_merge = merged_linked_l
 
     while linked_l1 or linked_l2:
-        # no order is supported for linked_l1 and linked_l2 on each step they can swap
         curr_merge, linked_l1, linked_l2 = make_1_merge(curr_merge, linked_l1, linked_l2)
 
     return merged_linked_l
