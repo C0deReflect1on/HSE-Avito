@@ -48,7 +48,6 @@ class HashMap:
                 return
         self.storage[idx].append([key, value])
 
-
     def __getitem__(self, key):
         idx = self.get_idx(key)
         for pair in self.storage[idx]:
@@ -63,10 +62,8 @@ class HashMap:
                 return
         raise KeyError(f"No such key: {key}")
 
-
     def keys(self):
         return [pair[0] for bucket in self.storage for pair in bucket]
-
 
     def values(self):
         return [pair[1] for bucket in self.storage for pair in bucket]
