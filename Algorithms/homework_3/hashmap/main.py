@@ -70,30 +70,3 @@ class HashMap:
 
     def values(self):
         return [pair[1] for bucket in self.storage for pair in bucket]
-
-m = HashMap()
-n = 1000
-# вставка
-start = time.time()
-for i in range(n):
-    m[i] = i
-insert_time = time.time() - start
-
-# поиск
-start = time.time()
-for i in range(n):
-    assert m[i] == i
-lookup_time = time.time() - start
-
-# для сравнения, поиск в списке
-lst = [[i, i] for i in range(n)]
-start = time.time()
-for i in range(n):
-    # поиск по списку
-    val = next(pair[1] for pair in lst if pair[0] == i)
-    assert val == i
-list_lookup_time = time.time() - start
-
-print(f"HashMap insert: {insert_time:.4f}s, lookup: {lookup_time:.4f}s, list lookup: {list_lookup_time:.4f}s")
-# Проверяем, что поиск в HashMap быстрее, чем в списке
-assert lookup_time < list_lookup_time
