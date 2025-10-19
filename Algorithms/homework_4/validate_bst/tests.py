@@ -17,7 +17,7 @@ def make_valid_bst():
 def make_invalid_bst_left_violation():
     #      10
     #     /
-    #    15   ← ошибка: левый > родителя
+    #    15 ошибка: левый > родителя
     root = Node(10)
     root.left = Node(15)
     return root
@@ -25,7 +25,7 @@ def make_invalid_bst_left_violation():
 def make_duplicate_right_ok():
     #      10
     #        \
-    #         10   ← дубликат вправо допустим
+    #         10 дубликат вправо допустим
     root = Node(10)
     root.right = Node(10)
     return root
@@ -33,7 +33,7 @@ def make_duplicate_right_ok():
 def make_duplicate_left_fail():
     #      10
     #     /
-    #    10   ← дубликат влево недопустим
+    #    10 дубликат влево недопустим
     root = Node(10)
     root.left = Node(10)
     return root
