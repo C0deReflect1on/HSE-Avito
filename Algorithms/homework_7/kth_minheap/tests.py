@@ -1,0 +1,111 @@
+import heapq
+import random
+import pytest
+
+
+def parent(i):
+    return (i - 1) // 2
+
+def sift_up(heap, i):
+    while i > 0 and heap[i] < heap[parent(i)]:
+        p = parent(i)
+        heap[i], heap[p] = heap[p], heap[i]
+        i = p
+
+def sift_down(heap, i):
+    n = len(heap)
+    while True:
+        left = 2*i + 1
+        right = 2*i + 2
+        smallest = i
+        if left < n and heap[left] < heap[smallest]:
+            smallest = left
+        if right < n and heap[right] < heap[smallest]:
+            smallest = right
+        if smallest == i:
+            break
+        heap[i], heap[smallest] = heap[smallest], heap[i]
+        i = smallest
+
+def heappush(heap, x):
+    heap.append(x)
+    sift_up(heap, len(heap) - 1)
+
+def heappop(heap):
+    heap[0], heap[-1] = heap[-1], heap[0]
+    x = heap.pop()
+    if heap:
+        sift_down(heap, 0)
+    return x
+
+def kth_largest_custom(arr, k):
+    heap = []
+    for x in arr:
+        if len(heap) < k:
+            heappush(heap, x)
+        elif x > heap[0]:
+            heappop(heap)
+            heappush(heap, x)
+    return heap[0]
+
+
+def kth_largest_heapq(arr, k):
+    heap = []
+    for x in arr:
+        if len(heap) < k:
+            heapq.heappush(heap, x)
+        elif x > heap[0]:
+            heapq.heapreplace(heap, x)
+    return heap[0]
+
+
+@pytest.mark.parametrize("arr,k,expected", [
+    ([1], 1, 1),
+    ([5,4,3,2,1], 1, 5),
+    ([5,4,3,2,1], 5, 1),
+    ([3,1,2], 2, 2),
+    ([10, -1, 0, 99], 1, 99),
+    ([10, -1, 0, 99], 4, -1),
+])
+def test_basic_cases(arr, k, expected):
+    assert kth_largest_custom(arr, k) == expected
+    assert kth_largest_heapq(arr, k) == expected
+
+
+@pytest.mark.parametrize("arr,k", [
+    ([9,8,7,1,2,3], 3),
+    ([100,50,20,10,5], 2),
+    ([1,2,3,4,5], 4),
+])
+def test_small_sets(arr, k):
+    expected = sorted(arr)[-k]
+    assert kth_largest_custom(arr, k) == expected
+    assert kth_largest_heapq(arr, k) == expected
+
+
+def test_random_small():
+    for _ in range(200):
+        arr = [random.randint(-500,500) for _ in range(20)]
+        k = random.randint(1, len(arr))
+        expected = sorted(arr)[-k]
+        assert kth_largest_custom(arr, k) == expected
+        assert kth_largest_heapq(arr, k) == expected
+
+
+def test_random_medium():
+    for _ in range(20):
+        arr = [random.randint(-10**6, 10**6) for _ in range(2000)]
+        k = random.randint(1, len(arr))
+        expected = sorted(arr)[-k]
+        assert kth_largest_custom(arr, k) == expected
+        assert kth_largest_heapq(arr, k) == expected
+
+
+def test_same_output_both_methods():
+    for _ in range(50):
+        arr = [random.randint(-1000,1000) for _ in range(100)]
+        k = random.randint(1, len(arr))
+        assert (
+            kth_largest_custom(arr, k)
+            == kth_largest_heapq(arr, k)
+        )
