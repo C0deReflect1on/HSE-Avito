@@ -2,62 +2,8 @@ import heapq
 import random
 import pytest
 
-
-def parent(i):
-    return (i - 1) // 2
-
-def sift_up(heap, i):
-    while i > 0 and heap[i] < heap[parent(i)]:
-        p = parent(i)
-        heap[i], heap[p] = heap[p], heap[i]
-        i = p
-
-def sift_down(heap, i):
-    n = len(heap)
-    while True:
-        left = 2*i + 1
-        right = 2*i + 2
-        smallest = i
-        if left < n and heap[left] < heap[smallest]:
-            smallest = left
-        if right < n and heap[right] < heap[smallest]:
-            smallest = right
-        if smallest == i:
-            break
-        heap[i], heap[smallest] = heap[smallest], heap[i]
-        i = smallest
-
-def heappush(heap, x):
-    heap.append(x)
-    sift_up(heap, len(heap) - 1)
-
-def heappop(heap):
-    heap[0], heap[-1] = heap[-1], heap[0]
-    x = heap.pop()
-    if heap:
-        sift_down(heap, 0)
-    return x
-
-def kth_largest_custom(arr, k):
-    heap = []
-    for x in arr:
-        if len(heap) < k:
-            heappush(heap, x)
-        elif x > heap[0]:
-            heappop(heap)
-            heappush(heap, x)
-    return heap[0]
-
-
-def kth_largest_heapq(arr, k):
-    heap = []
-    for x in arr:
-        if len(heap) < k:
-            heapq.heappush(heap, x)
-        elif x > heap[0]:
-            heapq.heapreplace(heap, x)
-    return heap[0]
-
+from manual_heap import kth_largest_custom
+from heapq_ import kth_largest_heapq
 
 @pytest.mark.parametrize("arr,k,expected", [
     ([1], 1, 1),
