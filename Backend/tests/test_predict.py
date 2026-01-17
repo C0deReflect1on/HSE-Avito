@@ -8,7 +8,7 @@ def make_payload(**overrides):
         "item_id": 10,
         "name": "Item",
         "description": "Description",
-        "category": 3,
+        "category": 2,
         "images_qty": 1,
     }
     payload.update(overrides)
