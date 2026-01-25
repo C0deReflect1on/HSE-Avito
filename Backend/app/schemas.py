@@ -16,3 +16,8 @@ class PredictRequest(BaseModel):
         if value < 0:
             raise ValueError("images_qty must be >= 0")
         return value
+
+
+class PredictResponse(BaseModel):
+    is_violation: bool
+    probability: float
