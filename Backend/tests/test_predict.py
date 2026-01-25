@@ -1,46 +1,46 @@
-from app.routers.predict import moderation_service
+from unittest.mock import Mock
+
+from app.routers import predict as predict_router
+from app.services.moderation import ModerationError, ModerationService
 
 
-def make_payload(**overrides):
-    payload = {
-        "seller_id": 1,
-        "is_verified_seller": False,
-        "item_id": 10,
-        "name": "Item",
-        "description": "Description",
-        "category": 2,
-        "images_qty": 1,
-    }
-    payload.update(overrides)
-    return payload
-
-
-def test_predict_positive_for_verified_seller(client):
-    payload = make_payload(is_verified_seller=True, images_qty=0)
+def test_predict_positive_for_verified_seller(client, payload_factory):
+    payload = payload_factory(is_verified_seller=True, images_qty=0)
     response = client.post("/predict", json=payload)
     assert response.status_code == 200
     assert response.json() is True
 
 
-def test_predict_negative_for_unverified_without_images(client):
-    payload = make_payload(is_verified_seller=False, images_qty=0)
+def test_predict_negative_for_unverified_without_images(client, payload_factory):
+    payload = payload_factory(is_verified_seller=False, images_qty=0)
     response = client.post("/predict", json=payload)
     assert response.status_code == 200
     assert response.json() is False
 
 
-def test_predict_validation_error(client):
-    payload = make_payload()
-    payload.pop("seller_id")
+def test_predict_positive_for_unverified_with_images(client, payload_factory):
+    payload = payload_factory(is_verified_seller=False, images_qty=1)
+    response = client.post("/predict", json=payload)
+    assert response.status_code == 200
+    assert response.json() is True
+
+
+def test_predict_validation_error(client, payload_factory):
+    payload = payload_factory(images_qty=-1)
     response = client.post("/predict", json=payload)
     assert response.status_code == 422
 
 
-def test_predict_business_error(client):
-    moderation_service.service_up = False
-    try:
-        response = client.post("/predict", json=make_payload())
-        assert response.status_code == 500
-        assert response.json() == {"detail": "service temporarily unavailable"}
-    finally:
-        moderation_service.service_up = True
+def test_predict_business_error(client, payload_factory, monkeypatch):
+    availability_checker = Mock()
+    availability_checker.ensure_available.side_effect = ModerationError(
+        "service temporarily unavailable"
+    )
+    moderation_service = ModerationService(
+        predict_router.repository,
+        availability_checker,
+    )
+    monkeypatch.setattr(predict_router, "moderation_service", moderation_service)
+    response = client.post("/predict", json=payload_factory())
+    assert response.status_code == 500
+    assert response.json() == {"detail": "service temporarily unavailable"}
