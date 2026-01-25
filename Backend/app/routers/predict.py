@@ -2,12 +2,13 @@ from fastapi import APIRouter
 
 from app.repositories.moderation_repository import repository
 from app.schemas import PredictRequest
-from app.services.moderation import ModerationService
+from app.services.moderation import AlwaysAvailableService, ModerationService
 
 
 router = APIRouter()
 
-moderation_service = ModerationService(repository)
+availability_checker = AlwaysAvailableService()
+moderation_service = ModerationService(repository, availability_checker)
 
 
 @router.post("/predict", response_model=bool)
