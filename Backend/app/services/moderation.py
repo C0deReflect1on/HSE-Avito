@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import logging
-from typing import Any, Protocol
+from typing import Protocol
 
 from app.repositories.moderation_repository import ModerationRepository
 from app.schemas import PredictRequest
@@ -22,6 +22,10 @@ class ServiceAvailability(Protocol):
     def ensure_available(self) -> None: ...
 
 
+class ModelProvider(Protocol):
+    def predict_proba(self, features: list[float]) -> float: ...
+
+
 @dataclass(frozen=True)
 class AlwaysAvailableService:
     def ensure_available(self) -> None:
@@ -32,11 +36,7 @@ class AlwaysAvailableService:
 class ModerationService:
     _repository: ModerationRepository
     _availability_checker: ServiceAvailability
-
-    def _require_model(self, model: Any | None) -> Any:
-        if model is None:
-            raise ModelUnavailableError("moderation model is not loaded")
-        return model
+    _model_provider: ModelProvider
 
     def _prepare_features(self, payload: PredictRequest) -> dict[str, float]:
         return {
@@ -46,16 +46,11 @@ class ModerationService:
             "category": payload.category / 100.0,
         }
 
-    def predict(self, payload: PredictRequest, model: Any | None) -> bool:
+    def predict(self, payload: PredictRequest) -> bool:
         self._availability_checker.ensure_available()
-        model = self._require_model(model)
         normalized_features = self._prepare_features(payload)
         feature_vector = list(normalized_features.values())
-
-        try:
-            probability = float(model.predict_proba([feature_vector])[0][1])
-        except Exception as exc:
-            raise ModelPredictionError("predictions are unavailable") from exc
+        probability = self._model_provider.predict_proba(feature_vector)
 
         logger = logging.getLogger(__name__)
         logger.info(
