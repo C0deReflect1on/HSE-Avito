@@ -3,7 +3,6 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.model import get_model
 from app.routers import predict as predict_router_module
 from app.services.moderation import ModerationError, ModelUnavailableError, ModelPredictionError
 
@@ -12,19 +11,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-app.state.model = None
 app.include_router(predict_router_module.router)
 
 
 @app.on_event("startup")
 def load_model() -> None:
     try:
-        model = get_model()
+        predict_router_module.model_provider.load()
     except Exception:
         logger.exception("Failed to load the moderation model")
         raise
-
-    app.state.model = model
 
 
 @app.get("/")
