@@ -1,2 +1,0 @@
-database_dsn: ${DATABASE_DSN}
-migrations_dir: migrations
