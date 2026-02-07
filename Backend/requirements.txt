@@ -1,2 +1,5 @@
 numpy==2.4.1
 scikit-learn==1.8.0
+asyncpg
+psycopg2-binary
+yandex-pgmigrate
