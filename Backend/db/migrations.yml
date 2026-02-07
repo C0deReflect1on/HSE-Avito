@@ -1,0 +1,2 @@
+conn: "dbname=avito user=app host=localhost port=5432 password=app"
+base_dir: db

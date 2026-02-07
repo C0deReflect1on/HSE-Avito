@@ -21,3 +21,7 @@ class PredictRequest(BaseModel):
 class PredictResponse(BaseModel):
     is_violation: bool
     probability: float
+
+
+class SimplePredictRequest(BaseModel):
+    item_id: int = Field(gt=0)
