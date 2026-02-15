@@ -3,3 +3,5 @@ scikit-learn==1.8.0
 asyncpg
 psycopg2-binary
 yandex-pgmigrate
+python-dotenv
+aiokafka

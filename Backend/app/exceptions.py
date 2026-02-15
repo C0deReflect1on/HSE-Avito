@@ -1,0 +1,2 @@
+class WrongItemIdError(Exception):
+    pass
