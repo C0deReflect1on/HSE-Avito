@@ -1,14 +1,18 @@
 from fastapi import APIRouter, HTTPException
+from fastapi import Depends
+from app.deps import get_kafka_producer
+from app.clients.kafka import KafkaProducer
 
 from app.repositories.moderation_repository import repository
 from app.repositories.items import ItemRepository
 from app.schemas import PredictRequest, SimplePredictRequest
+from app.exceptions import WrongItemIdError
 from app.services.model_provider import ModerationModelProvider
 from app.services.moderation import AlwaysAvailableService, ModerationService
+from app.settings import MODERATION_TOPIC
 
 
 router = APIRouter()
-
 availability_checker = AlwaysAvailableService()
 model_provider = ModerationModelProvider()
 moderation_service = ModerationService(repository, availability_checker, model_provider)
@@ -36,3 +40,13 @@ async def simple_predict(payload: SimplePredictRequest) -> bool:
         images_qty=item_data["images_qty"],
     )
     return moderation_service.predict(request_payload)
+
+
+@router.post("/async_predict")
+async def async_predict(payload: SimplePredictRequest, producer: KafkaProducer = Depends(get_kafka_producer)):
+    try:
+        task_id = await repository.create_pending(payload)
+    except WrongItemIdError:
+        raise HTTPException(status_code=404, detail="wrong_item_id")
+    await producer.send_moderation_request(MODERATION_TOPIC, task_id, payload.item_id)
+    return task_id
