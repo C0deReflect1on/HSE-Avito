@@ -3,7 +3,7 @@ import logging
 from typing import Protocol
 
 from app.repositories.moderation_repository import ModerationRepository
-from app.schemas import PredictRequest
+from app.schemas import PredictRequest, PredictResponse
 
 
 class ModerationError(Exception):
@@ -46,7 +46,7 @@ class ModerationService:
             "category": payload.category / 100.0,
         }
 
-    def predict(self, payload: PredictRequest) -> bool:
+    def predict(self, payload: PredictRequest) -> PredictResponse:
         self._availability_checker.ensure_available()
         normalized_features = self._prepare_features(payload)
         feature_vector = list(normalized_features.values())
@@ -68,4 +68,4 @@ class ModerationService:
             probability,
         )
         self._repository.save_prediction(payload, result)
-        return result
+        return result, probability

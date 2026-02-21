@@ -1,9 +1,9 @@
 import asyncio
 import json
 import logging
+import time
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from asyncpg.introspection import TypeRecord
 
 from app import db
 from app.repositories.items import ItemRepository
@@ -47,10 +47,16 @@ async def main() -> None:
         async for msg in consumer:
             task_id = None
             item_id = None
+            event = {}
             try:
                 event = json.loads(msg.value.decode("utf-8"))
                 task_id = int(event["task_id"])
                 item_id = int(event["item_id"])
+                retry_count = int(event.get("retry_count", 0))
+
+                if item_id == 2:
+                    await asyncio.sleep(5) # Успеть в базу поглядеть
+                    raise Exception("DLQ test")
 
                 item_data = await items_repo.get_item_with_user(item_id)
                 if item_data is None:
@@ -66,33 +72,32 @@ async def main() -> None:
                     images_qty=item_data["images_qty"],
                 )
                 logger.info("before moderation_service.predict")
-                is_violation = moderation_service.predict(req)
+                is_violation, probability = moderation_service.predict(req)
 
                 await results_repo.update_completed(
                     task_id=task_id,
                     is_violation=is_violation,
-                    probability=1.0 if is_violation else 0.0,
+                    probability=probability
                 )
 
                 logger.info("after update_completed moderation_service.predict")
                 await consumer.commit()
 
             except Exception as e:
-                logger.info("in exception ", e)
-                if task_id is not None:
-                    await results_repo.update_failed(task_id, str(e))
-                
+                logger.exception("Moderation failed: %s", e)
+                retry_count = int(event.get("retry_count", 0) or 0) + 1
                 dlq_payload = {
                     "task_id": task_id,
                     "item_id": item_id,
+                    "retry_count": retry_count,
                     "error": str(e),
                     "original": msg.value.decode("utf-8", errors="replace"),
                     "topic": msg.topic,
                     "partition": msg.partition,
                     "offset": msg.offset,
+                    "timestamp": int(time.time() * 1000),
                 }
                 await dlq.send_and_wait(DLQ_TOPIC, json.dumps(dlq_payload).encode("utf-8"))
-
                 await consumer.commit()
     finally:
         await consumer.stop()

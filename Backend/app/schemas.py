@@ -25,3 +25,9 @@ class PredictResponse(BaseModel):
 
 class SimplePredictRequest(BaseModel):
     item_id: int = Field(gt=0)
+
+
+class AsyncPredictResponse(BaseModel):
+    task_id: int
+    status: str
+    message: str

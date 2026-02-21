@@ -54,3 +54,27 @@ services:
       - "8080:8080"
     depends_on:
       - redpanda
+
+  moderation_worker:
+    build: .
+    command: python -m app.workers.moderation_worker
+    environment:
+      DATABASE_DSN: postgresql://app:app@postgres:5432/avito
+      KAFKA_BOOTSTRAP: redpanda:29092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+
+  dlq_worker:
+    build: .
+    command: python -m app.workers.dlq_worker
+    environment:
+      DATABASE_DSN: postgresql://app:app@postgres:5432/avito
+      KAFKA_BOOTSTRAP: redpanda:29092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started

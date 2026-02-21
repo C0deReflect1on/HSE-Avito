@@ -309,5 +309,112 @@ def test_worker_sends_to_dlq_on_error(database_dsn):
     dlq_body = json.loads(call_args[0][1].decode("utf-8"))
     assert dlq_body["task_id"] == 1
     assert dlq_body["item_id"] == 99999
+    assert dlq_body["retry_count"] == 1
     assert "item not found" in dlq_body["error"]
     assert "original" in dlq_body
+
+
+def test_dlq_worker_marks_failed_after_3_retries(database_dsn):
+    """DLQ consumer при retry_count >= 3 помечает задачу как failed, не шлёт retry."""
+    async def _run():
+        await _seed_user_and_item(
+            database_dsn,
+            seller_id=1,
+            is_verified=False,
+            item_id=99,
+            name="Item",
+            description="Desc",
+            category=1,
+            images_qty=0,
+        )
+        conn = await asyncpg.connect(database_dsn)
+        try:
+            task_id = await conn.fetchval(
+                "INSERT INTO moderation_results (item_id, status) VALUES (99, 'pending') RETURNING id"
+            )
+        finally:
+            await conn.close()
+
+        msg = FakeMessage(
+            json.dumps({
+                "task_id": task_id,
+                "item_id": 99,
+                "retry_count": 3,
+                "error": "item not found",
+                "original": "{}",
+            }).encode("utf-8")
+        )
+
+        mock_consumer = MagicMock()
+        mock_consumer.start = AsyncMock(return_value=None)
+        mock_consumer.stop = AsyncMock(return_value=None)
+        mock_consumer.commit = AsyncMock(return_value=None)
+        mock_consumer.__aiter__ = lambda: SimpleAsyncIterator([msg])
+
+        mock_producer = MagicMock()
+        mock_producer.start = AsyncMock(return_value=None)
+        mock_producer.stop = AsyncMock(return_value=None)
+        mock_producer.send_and_wait = AsyncMock(return_value=None)
+
+        with patch("app.workers.dlq_worker.AIOKafkaConsumer", return_value=mock_consumer), \
+             patch("app.workers.dlq_worker.AIOKafkaProducer", return_value=mock_producer):
+            from app.workers.dlq_worker import main
+            await main()
+
+        # Retry не должен вызываться (retry_count >= 3)
+        mock_producer.send_and_wait.assert_not_called()
+
+        # Статус должен быть failed
+        conn = await asyncpg.connect(database_dsn)
+        try:
+            row = await conn.fetchrow(
+                "SELECT status, error_message FROM moderation_results WHERE id = $1",
+                task_id,
+            )
+            assert row is not None
+            assert row["status"] == "failed"
+            assert "3 retries" in row["error_message"]
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
+
+
+def test_dlq_worker_retries_when_count_less_than_3():
+    """DLQ consumer при retry_count < 3 переотправляет в MODERATION_TOPIC."""
+    async def _run():
+        msg = FakeMessage(
+            json.dumps({
+                "task_id": 1,
+                "item_id": 100,
+                "retry_count": 1,
+                "error": "item not found",
+                "original": "{}",
+            }).encode("utf-8")
+        )
+
+        mock_consumer = MagicMock()
+        mock_consumer.start = AsyncMock(return_value=None)
+        mock_consumer.stop = AsyncMock(return_value=None)
+        mock_consumer.commit = AsyncMock(return_value=None)
+        mock_consumer.__aiter__ = lambda: SimpleAsyncIterator([msg])
+
+        mock_producer = MagicMock()
+        mock_producer.start = AsyncMock(return_value=None)
+        mock_producer.stop = AsyncMock(return_value=None)
+        mock_producer.send_and_wait = AsyncMock(return_value=None)
+
+        with patch("app.workers.dlq_worker.AIOKafkaConsumer", return_value=mock_consumer), \
+             patch("app.workers.dlq_worker.AIOKafkaProducer", return_value=mock_producer):
+            from app.workers.dlq_worker import main
+            await main()
+
+        mock_producer.send_and_wait.assert_called_once()
+        call_args = mock_producer.send_and_wait.call_args
+        assert call_args[0][0] == MODERATION_TOPIC
+        body = json.loads(call_args[0][1].decode("utf-8"))
+        assert body["task_id"] == 1
+        assert body["item_id"] == 100
+        assert body["retry_count"] == 1
+
+    asyncio.run(_run())
