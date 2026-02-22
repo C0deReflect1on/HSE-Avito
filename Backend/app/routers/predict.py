@@ -1,15 +1,23 @@
 from fastapi import APIRouter, HTTPException
 from fastapi import Depends
+from redis.asyncio import Redis
 from app.deps import get_kafka_producer
 from app.clients.kafka import KafkaProducer
 
 from app.repositories.moderation_repository import repository
 from app.repositories.items import ItemRepository
-from app.schemas import PredictRequest, SimplePredictRequest, AsyncPredictResponse, PredictResponse
+from app.schemas import (
+    PredictRequest,
+    SimplePredictRequest,
+    AsyncPredictResponse,
+    PredictResponse,
+    CloseItemRequest,
+)
 from app.exceptions import WrongItemIdError
 from app.services.model_provider import ModerationModelProvider
 from app.services.moderation import AlwaysAvailableService, ModerationService
 from app.settings import MODERATION_TOPIC
+from app.settings import REDIS_URL
 
 
 router = APIRouter()
@@ -56,8 +64,23 @@ async def async_predict(
             # Fail task if it Kafka failed
             await repository.update_status(task_id, "failed", error=str(e))
             raise HTTPException(status_code=500, detail=f"Failed to send moderation request: {str(e)}")
-        
+
         return {"task_id": task_id, "status": "pending", "message": "Moderation request accepted"}
     
     except WrongItemIdError:
         raise HTTPException(status_code=404, detail="wrong_item_id")
+
+
+@router.post("/close")
+async def close_item(payload: CloseItemRequest) -> dict[str, str]:
+    deleted = await item_repository.close_item(payload.item_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="item not found")
+
+    redis = Redis.from_url(REDIS_URL, decode_responses=True)
+    try:
+        await redis.delete(f"item_prediction:item_id:{payload.item_id}")
+    finally:
+        await redis.aclose()
+
+    return {"status": "closed"}

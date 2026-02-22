@@ -57,3 +57,20 @@ class ItemRepository:
         if row is None:
             return None
         return dict(row)
+
+    async def close_item(self, item_id: int) -> bool:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                updated = await conn.fetchval(
+                    "UPDATE items SET is_closed = TRUE WHERE id = $1 RETURNING id",
+                    item_id,
+                )
+                if updated is None:
+                    return False
+                await conn.execute(
+                    "DELETE FROM moderation_results WHERE item_id = $1",
+                    item_id,
+                )
+                await conn.execute("DELETE FROM items WHERE id = $1", item_id)
+                return True

@@ -31,3 +31,7 @@ class AsyncPredictResponse(BaseModel):
     task_id: int
     status: str
     message: str
+
+
+class CloseItemRequest(BaseModel):
+    item_id: int = Field(gt=0)

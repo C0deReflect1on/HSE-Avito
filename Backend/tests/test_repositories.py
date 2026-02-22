@@ -1,8 +1,12 @@
 import asyncio
 
+import pytest
+
 from app import db
 from app.repositories.items import ItemRepository
 from app.repositories.users import UserRepository
+
+pytestmark = pytest.mark.integration
 
 
 def test_create_user_and_item(database_dsn):

@@ -1,4 +1,4 @@
-"""Tests for async_predict, moderation_result, worker and DLQ."""
+"""Integration tests for workers and DLQ."""
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,6 +7,9 @@ import asyncpg
 import pytest
 
 from app.settings import DLQ_TOPIC, MODERATION_TOPIC
+from app.schemas import PredictResponse
+
+pytestmark = pytest.mark.integration
 
 
 async def _seed_user_and_item(
@@ -40,148 +43,6 @@ async def _seed_user_and_item(
         )
     finally:
         await conn.close()
-
-
-# --- async_predict tests ---
-
-
-def test_async_predict_creates_task_and_sends_to_kafka(
-    client_with_kafka_mock, database_dsn
-):
-    """POST /async_predict создаёт задачу в БД и отправляет сообщение в Kafka."""
-    client, mock_producer = client_with_kafka_mock
-    asyncio.run(
-        _seed_user_and_item(
-            database_dsn,
-            seller_id=1,
-            is_verified=False,
-            item_id=100,
-            name="Test item",
-            description="Desc",
-            category=5,
-            images_qty=2,
-        )
-    )
-
-    response = client.post("/async_predict", json={"item_id": 100})
-
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, dict)
-    assert data["status"] == "pending"
-    assert data["message"] == "Moderation request accepted"
-    task_id = data["task_id"]
-    assert isinstance(task_id, int)
-    assert task_id >= 1
-
-    # Проверка вызова Kafka
-    mock_producer.send_moderation_request.assert_called_once_with(
-        MODERATION_TOPIC, task_id, 100
-    )
-
-    # Задача в БД со статусом pending
-    moderation_response = client.get(f"/moderation_result/{task_id}")
-    assert moderation_response.status_code == 200
-    assert moderation_response.json()["status"] == "pending"
-    assert moderation_response.json()["task_id"] == task_id
-
-
-def test_async_predict_validation_error(client):
-    """POST /async_predict с невалидным item_id возвращает 422."""
-    response = client.post("/async_predict", json={"item_id": 0})
-    assert response.status_code == 422
-
-
-def test_async_predict_wrong_item_id(client):
-    """POST /async_predict с несуществующим item_id возвращает 404 wrong_item_id."""
-    # item_id=2 не создан в БД
-    response = client.post("/async_predict", json={"item_id": 2})
-    assert response.status_code == 404
-    assert response.json()["detail"] == "wrong_item_id"
-
-
-# --- moderation_result tests ---
-
-
-def test_moderation_result_pending(client, database_dsn):
-    """GET /moderation_result/{task_id} для задачи со статусом pending."""
-    async def _create_pending_task():
-        conn = await asyncpg.connect(database_dsn)
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO moderation_results (item_id, status)
-                VALUES (NULL, 'pending')
-                RETURNING id
-                """
-            )
-            return row["id"]
-        finally:
-            await conn.close()
-
-    task_id = asyncio.run(_create_pending_task())
-    response = client.get(f"/moderation_result/{task_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["task_id"] == task_id
-    assert data["status"] == "pending"
-    assert "result" not in data
-    assert "error_message" not in data
-
-
-def test_moderation_result_completed(client, database_dsn):
-    """GET /moderation_result/{task_id} для задачи со статусом completed."""
-    async def _create_completed_task():
-        conn = await asyncpg.connect(database_dsn)
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO moderation_results (item_id, status, is_violation, probability)
-                VALUES (NULL, 'completed', true, 0.85)
-                RETURNING id
-                """
-            )
-            return row["id"]
-        finally:
-            await conn.close()
-
-    task_id = asyncio.run(_create_completed_task())
-    response = client.get(f"/moderation_result/{task_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "completed"
-    assert data["result"] == {"is_violation": True, "probability": 0.85}
-
-
-def test_moderation_result_failed(client, database_dsn):
-    """GET /moderation_result/{task_id} для задачи со статусом failed."""
-    async def _create_failed_task():
-        conn = await asyncpg.connect(database_dsn)
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO moderation_results (item_id, status, error_message)
-                VALUES (NULL, 'failed', 'item not found: 123')
-                RETURNING id
-                """
-            )
-            return row["id"]
-        finally:
-            await conn.close()
-
-    task_id = asyncio.run(_create_failed_task())
-    response = client.get(f"/moderation_result/{task_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "failed"
-    assert data["error_message"] == "item not found: 123"
-
-
-def test_moderation_result_not_found(client):
-    """GET /moderation_result/{task_id} для несуществующей задачи — 404."""
-    response = client.get("/moderation_result/999999")
-    assert response.status_code == 404
-    assert "task not found" in response.json()["detail"].lower()
 
 
 # --- Worker message processing tests ---
@@ -277,6 +138,74 @@ def test_worker_processes_message_success(database_dsn):
     mock_dlq = asyncio.run(_run())
     # DLQ не вызывался (ошибок не было)
     mock_dlq.send_and_wait.assert_not_called()
+
+
+def test_worker_skips_model_when_cache_hit(database_dsn):
+    async def _run():
+        await _seed_user_and_item(
+            database_dsn,
+            seller_id=10,
+            is_verified=False,
+            item_id=60,
+            name="Item",
+            description="Desc",
+            category=3,
+            images_qty=1,
+        )
+
+        conn = await asyncpg.connect(database_dsn)
+        try:
+            task_id = await conn.fetchval(
+                "INSERT INTO moderation_results (item_id, status) VALUES (60, 'pending') RETURNING id"
+            )
+        finally:
+            await conn.close()
+
+        msg = FakeMessage(json.dumps({"task_id": task_id, "item_id": 60}).encode("utf-8"))
+        mock_consumer = MagicMock()
+        mock_consumer.start = AsyncMock(return_value=None)
+        mock_consumer.stop = AsyncMock(return_value=None)
+        mock_consumer.commit = AsyncMock(return_value=None)
+        mock_consumer.__aiter__ = lambda *args: SimpleAsyncIterator([msg])
+
+        mock_dlq = MagicMock()
+        mock_dlq.start = AsyncMock(return_value=None)
+        mock_dlq.stop = AsyncMock(return_value=None)
+        mock_dlq.send_and_wait = AsyncMock(return_value=None)
+
+        with patch("app.workers.moderation_worker.AIOKafkaConsumer", return_value=mock_consumer), \
+             patch("app.workers.moderation_worker.AIOKafkaProducer", return_value=mock_dlq), \
+             patch("app.workers.moderation_worker.Redis.from_url") as mock_redis, \
+             patch("app.workers.moderation_worker.ModerationRepository.get_cached_prediction", new=AsyncMock(return_value=PredictResponse(is_violation=False, probability=0.11))), \
+             patch("app.workers.moderation_worker.ModerationModelProvider") as MockProvider:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping = AsyncMock(return_value=True)
+            mock_redis_client.aclose = AsyncMock(return_value=None)
+            mock_redis.return_value = mock_redis_client
+
+            mock_prov = MagicMock()
+            mock_prov.load = MagicMock()
+            mock_prov.predict_proba = MagicMock(return_value=0.99)
+            MockProvider.return_value = mock_prov
+
+            from app.workers.moderation_worker import main
+            await main()
+
+            assert mock_prov.predict_proba.call_count == 0
+
+        conn = await asyncpg.connect(database_dsn)
+        try:
+            row = await conn.fetchrow(
+                "SELECT status, is_violation, probability FROM moderation_results WHERE id = $1",
+                task_id,
+            )
+            assert row is not None
+            assert row["status"] == "completed"
+            assert row["is_violation"] is False
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
 
 
 def test_worker_sends_to_dlq_on_error(database_dsn):

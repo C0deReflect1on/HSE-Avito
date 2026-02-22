@@ -45,7 +45,7 @@ def database_dsn() -> str:
 # def apply_migrations(database_dsn: str) -> None:
 #     sql = _load_all_migrations_sql()
 #     asyncio.run(_execute_sql(database_dsn, sql))
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def apply_migrations(database_dsn: str) -> None:
     async def setup():
         conn = await asyncpg.connect(database_dsn)
@@ -61,9 +61,18 @@ def apply_migrations(database_dsn: str) -> None:
     asyncio.run(setup())
 
 
-
 @pytest.fixture(autouse=True)
-def truncate_tables(database_dsn: str) -> None:
+def truncate_tables(request) -> None:
+    if request.node.get_closest_marker("integration") is None:
+        yield
+        return
+
+    if "database_dsn" not in request.fixturenames:
+        yield
+        return
+
+    database_dsn = request.getfixturevalue("database_dsn")
+    request.getfixturevalue("apply_migrations")
     sql = "TRUNCATE moderation_results, items, users RESTART IDENTITY CASCADE;"
     asyncio.run(_execute_sql(database_dsn, sql))
     yield
@@ -81,7 +90,11 @@ def _make_mock_kafka_producer():
 @pytest.fixture
 def client() -> TestClient:
     mock_producer = _make_mock_kafka_producer()
-    with patch("app.main.KafkaProducer", return_value=mock_producer):
+    with patch("app.main.KafkaProducer", return_value=mock_producer), patch(
+        "app.main.db.connect", new=AsyncMock(return_value=None)
+    ), patch("app.main.db.disconnect", new=AsyncMock(return_value=None)), patch(
+        "app.main.predict_router_module.model_provider.load", return_value=None
+    ):
         with TestClient(app) as client:
             yield client
 
@@ -90,7 +103,11 @@ def client() -> TestClient:
 def client_with_kafka_mock():
     """Client + mock Kafka producer for asserting send_moderation_request calls."""
     mock_producer = _make_mock_kafka_producer()
-    with patch("app.main.KafkaProducer", return_value=mock_producer):
+    with patch("app.main.KafkaProducer", return_value=mock_producer), patch(
+        "app.main.db.connect", new=AsyncMock(return_value=None)
+    ), patch("app.main.db.disconnect", new=AsyncMock(return_value=None)), patch(
+        "app.main.predict_router_module.model_provider.load", return_value=None
+    ):
         with TestClient(app) as client:
             yield client, mock_producer
 
