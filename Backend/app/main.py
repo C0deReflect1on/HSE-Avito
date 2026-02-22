@@ -42,8 +42,6 @@ async def startup() -> None:
     except Exception:
         logger.exception("Failed to start the Kafka producer")
         raise
-
-
 @app.on_event("shutdown")
 async def shutdown() -> None:
     producer: KafkaProducer | None = getattr(app.state, "kafka_producer", None)

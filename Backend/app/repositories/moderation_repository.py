@@ -1,24 +1,54 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 import asyncpg
-from app.schemas import PredictRequest
+from app.schemas import PredictRequest, PredictResponse
 from app.exceptions import WrongItemIdError
 from app.storage.memory import InMemoryStorage
 from app.db import get_pool
-from typing import Any
 import logging
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+class PredictionCacheStorage(Protocol):
+    async def get_prediction(self, cache_key: str) -> PredictResponse | None: ...
+    async def set_prediction(self, cache_key: str, response: PredictResponse) -> None: ...
+    async def delete_prediction(self, cache_key: str) -> None: ...
+
+
+@dataclass
+class _CacheRef:
+    storage: PredictionCacheStorage | None = None
+
+
 @dataclass(frozen=True)
 class ModerationRepository:
     _storage: InMemoryStorage
+    _cache_ref: _CacheRef = field(default_factory=_CacheRef)
 
     # кажется это уже deprecated просто
     def save_prediction(self, payload: PredictRequest, result: bool) -> None:
         self._storage.add_prediction(payload, result)
+
+    def configure_cache_storage(self, cache_storage: PredictionCacheStorage) -> None:
+        self._cache_ref.storage = cache_storage
+
+    async def get_cached_prediction(self, cache_key: str) -> PredictResponse | None:
+        if self._cache_ref.storage is None:
+            return None
+        return await self._cache_ref.storage.get_prediction(cache_key)
+
+    async def cache_prediction(self, cache_key: str, response: PredictResponse) -> None:
+        if self._cache_ref.storage is None:
+            return None
+        await self._cache_ref.storage.set_prediction(cache_key, response)
+
+    async def delete_cached_prediction(self, cache_key: str) -> None:
+        if self._cache_ref.storage is None:
+            return None
+        await self._cache_ref.storage.delete_prediction(cache_key)
     
     async def create_pending(self, payload: PredictRequest) -> int:
         pool = get_pool()
@@ -75,6 +105,19 @@ class ModerationRepository:
             WHERE id = $1
             """,
             task_id, error_message)
+
+    async def update_status(self, task_id: int, status: str, error: str | None = None) -> None:
+        pool = get_pool()
+        await pool.execute(
+            """
+            UPDATE moderation_results
+            SET status = $2, error_message = $3, processed_at = NOW()
+            WHERE id = $1
+            """,
+            task_id,
+            status,
+            error,
+        )
 
 
 storage = InMemoryStorage()

@@ -7,3 +7,4 @@ psycopg2-binary
 yandex-pgmigrate
 python-dotenv
 aiokafka
+redis

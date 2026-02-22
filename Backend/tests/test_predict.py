@@ -1,10 +1,9 @@
-import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-import asyncpg
 import pytest
 
 from app.routers import predict as predict_router
+from app.exceptions import WrongItemIdError
 from app.services.moderation import (
     ModelPredictionError,
     ModelUnavailableError,
@@ -66,76 +65,94 @@ def test_predict_failure_returns_500(client, payload_factory):
     assert response.json()["detail"] == "predictions are unavailable"
 
 
-async def _seed_user_and_item(
-    dsn: str,
-    seller_id: int,
-    is_verified: bool,
-    item_id: int,
-    name: str,
-    description: str,
-    category: int,
-    images_qty: int,
-) -> None:
-    conn = await asyncpg.connect(dsn)
-    try:
-        await conn.execute(
-            "INSERT INTO users (id, is_verified_seller) VALUES ($1, $2)",
-            seller_id,
-            is_verified,
-        )
-        await conn.execute(
-            """
-            INSERT INTO items (id, seller_id, name, description, category, images_qty)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            """,
-            item_id,
-            seller_id,
-            name,
-            description,
-            category,
-            images_qty,
-        )
-    finally:
-        await conn.close()
-
-
-def test_simple_predict_positive(client, database_dsn):
-    asyncio.run(
-        _seed_user_and_item(
-            database_dsn,
-            seller_id=11,
-            is_verified=False,
-            item_id=101,
-            name="Item",
-            description="Description",
-            category=2,
-            images_qty=1,
-        )
-    )
-    with patch.object(
+def test_simple_predict_positive(client):
+    with patch(
+        "app.repositories.items.ItemRepository.get_item_with_user",
+        new=AsyncMock(
+            return_value={
+                "seller_id": 11,
+                "is_verified_seller": False,
+                "item_id": 101,
+                "name": "Item",
+                "description": "Description",
+                "category": 2,
+                "images_qty": 1,
+            }
+        ),
+    ), patch.object(
         predict_router.model_provider, "predict_proba", return_value=0.8
     ):
         response = client.post("/simple_predict", json={"item_id": 101})
     assert response.status_code == 200
-    assert response.json()['is_violation'] == True
+    assert response.json()["is_violation"] is True
 
 
-def test_simple_predict_negative(client, database_dsn):
-    asyncio.run(
-        _seed_user_and_item(
-            database_dsn,
-            seller_id=12,
-            is_verified=True,
-            item_id=202,
-            name="Item",
-            description="Description",
-            category=2,
-            images_qty=2,
-        )
-    )
-    with patch.object(
+def test_simple_predict_negative(client):
+    with patch(
+        "app.repositories.items.ItemRepository.get_item_with_user",
+        new=AsyncMock(
+            return_value={
+                "seller_id": 12,
+                "is_verified_seller": True,
+                "item_id": 202,
+                "name": "Item",
+                "description": "Description",
+                "category": 2,
+                "images_qty": 2,
+            }
+        ),
+    ), patch.object(
         predict_router.model_provider, "predict_proba", return_value=0.2
     ):
         response = client.post("/simple_predict", json={"item_id": 202})
     assert response.status_code == 200
-    assert response.json()['is_violation'] == False
+    assert response.json()["is_violation"] is False
+
+
+def test_async_predict_success(client_with_kafka_mock):
+    client, producer = client_with_kafka_mock
+    with patch(
+        "app.repositories.moderation_repository.ModerationRepository.create_pending",
+        new=AsyncMock(return_value=77),
+    ):
+        response = client.post("/async_predict", json={"item_id": 100})
+    assert response.status_code == 200
+    assert response.json()["task_id"] == 77
+    assert response.json()["status"] == "pending"
+    producer.send_moderation_request.assert_awaited_once_with(
+        predict_router.MODERATION_TOPIC, 77, 100
+    )
+
+
+def test_async_predict_wrong_item_id(client):
+    with patch(
+        "app.repositories.moderation_repository.ModerationRepository.create_pending",
+        new=AsyncMock(side_effect=WrongItemIdError()),
+    ):
+        response = client.post("/async_predict", json={"item_id": 999})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "wrong_item_id"
+
+
+def test_close_item_deletes_item_and_cache(client):
+    redis_mock = AsyncMock()
+    redis_mock.aclose = AsyncMock(return_value=None)
+    with patch(
+        "app.repositories.items.ItemRepository.close_item",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "app.routers.predict.Redis.from_url", return_value=redis_mock
+    ):
+        response = client.post("/close", json={"item_id": 50})
+    assert response.status_code == 200
+    assert response.json() == {"status": "closed"}
+    redis_mock.delete.assert_awaited_once_with("item_prediction:item_id:50")
+
+
+def test_close_item_not_found(client):
+    with patch(
+        "app.repositories.items.ItemRepository.close_item",
+        new=AsyncMock(return_value=False),
+    ):
+        response = client.post("/close", json={"item_id": 55})
+    assert response.status_code == 404
