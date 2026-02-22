@@ -66,7 +66,11 @@ def test_async_predict_creates_task_and_sends_to_kafka(
     response = client.post("/async_predict", json={"item_id": 100})
 
     assert response.status_code == 200
-    task_id = response.json()
+    data = response.json()
+    assert isinstance(data, dict)
+    assert data["status"] == "pending"
+    assert data["message"] == "Moderation request accepted"
+    task_id = data["task_id"]
     assert isinstance(task_id, int)
     assert task_id >= 1
 
@@ -80,8 +84,6 @@ def test_async_predict_creates_task_and_sends_to_kafka(
     assert moderation_response.status_code == 200
     assert moderation_response.json()["status"] == "pending"
     assert moderation_response.json()["task_id"] == task_id
-
-
 
 
 def test_async_predict_validation_error(client):
@@ -237,7 +239,7 @@ def test_worker_processes_message_success(database_dsn):
         mock_consumer.start = AsyncMock(return_value=None)
         mock_consumer.stop = AsyncMock(return_value=None)
         mock_consumer.commit = AsyncMock(return_value=None)
-        mock_consumer.__aiter__ = lambda: SimpleAsyncIterator([msg])
+        mock_consumer.__aiter__ = lambda *args: SimpleAsyncIterator([msg])
 
         mock_dlq = MagicMock()
         mock_dlq.start = AsyncMock(return_value=None)
@@ -286,7 +288,7 @@ def test_worker_sends_to_dlq_on_error(database_dsn):
         mock_consumer.start = AsyncMock(return_value=None)
         mock_consumer.stop = AsyncMock(return_value=None)
         mock_consumer.commit = AsyncMock(return_value=None)
-        mock_consumer.__aiter__ = lambda: SimpleAsyncIterator([msg])
+        mock_consumer.__aiter__ = lambda *args: SimpleAsyncIterator([msg])
 
         mock_dlq = MagicMock()
         mock_dlq.start = AsyncMock(return_value=None)
@@ -349,7 +351,7 @@ def test_dlq_worker_marks_failed_after_3_retries(database_dsn):
         mock_consumer.start = AsyncMock(return_value=None)
         mock_consumer.stop = AsyncMock(return_value=None)
         mock_consumer.commit = AsyncMock(return_value=None)
-        mock_consumer.__aiter__ = lambda: SimpleAsyncIterator([msg])
+        mock_consumer.__aiter__ = lambda *args: SimpleAsyncIterator([msg])
 
         mock_producer = MagicMock()
         mock_producer.start = AsyncMock(return_value=None)
@@ -397,7 +399,7 @@ def test_dlq_worker_retries_when_count_less_than_3():
         mock_consumer.start = AsyncMock(return_value=None)
         mock_consumer.stop = AsyncMock(return_value=None)
         mock_consumer.commit = AsyncMock(return_value=None)
-        mock_consumer.__aiter__ = lambda: SimpleAsyncIterator([msg])
+        mock_consumer.__aiter__ = lambda *args: SimpleAsyncIterator([msg])
 
         mock_producer = MagicMock()
         mock_producer.start = AsyncMock(return_value=None)

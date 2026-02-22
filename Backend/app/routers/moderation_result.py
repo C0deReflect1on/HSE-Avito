@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.get("/moderation_result/{task_id}")
 async def moderation_result(task_id: int) -> dict:
-    logger.info("in moderation_result:", task_id)
+    logger.info("in moderation_result: %s", task_id)
     row = await repository.get_by_id(task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="task not found")

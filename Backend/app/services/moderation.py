@@ -68,4 +68,4 @@ class ModerationService:
             probability,
         )
         self._repository.save_prediction(payload, result)
-        return result, probability
+        return PredictResponse(is_violation=result, probability=probability)

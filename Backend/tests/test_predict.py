@@ -14,8 +14,8 @@ from app.services.moderation import (
 @pytest.mark.parametrize(
     "probability,payload_overrides,expected",
     [
-        (0.8, {"is_verified_seller": False, "images_qty": 0}, True),
-        (0.2, {"is_verified_seller": True, "images_qty": 2}, False),
+        (0.8, {"is_verified_seller": False, "images_qty": 0}, {'is_violation': True, 'probability': 0.8}),
+        (0.2, {"is_verified_seller": True, "images_qty": 2}, {'is_violation': False, 'probability': 0.2}),
     ],
 )
 def test_predict_probability_threshold(
@@ -30,7 +30,7 @@ def test_predict_probability_threshold(
     ):
         response = client.post("/predict", json=payload_factory(**payload_overrides))
     assert response.status_code == 200
-    assert response.json() is expected
+    assert response.json() == expected
 
 
 def test_predict_validation_error(client, payload_factory):
@@ -117,7 +117,7 @@ def test_simple_predict_positive(client, database_dsn):
     ):
         response = client.post("/simple_predict", json={"item_id": 101})
     assert response.status_code == 200
-    assert response.json() is True
+    assert response.json()['is_violation'] == True
 
 
 def test_simple_predict_negative(client, database_dsn):
@@ -138,4 +138,4 @@ def test_simple_predict_negative(client, database_dsn):
     ):
         response = client.post("/simple_predict", json={"item_id": 202})
     assert response.status_code == 200
-    assert response.json() is False
+    assert response.json()['is_violation'] == False

@@ -5,7 +5,7 @@ from app.clients.kafka import KafkaProducer
 
 from app.repositories.moderation_repository import repository
 from app.repositories.items import ItemRepository
-from app.schemas import PredictRequest, SimplePredictRequest, AsyncPredictResponse
+from app.schemas import PredictRequest, SimplePredictRequest, AsyncPredictResponse, PredictResponse
 from app.exceptions import WrongItemIdError
 from app.services.model_provider import ModerationModelProvider
 from app.services.moderation import AlwaysAvailableService, ModerationService
@@ -19,13 +19,13 @@ moderation_service = ModerationService(repository, availability_checker, model_p
 item_repository = ItemRepository()
 
 
-@router.post("/predict", response_model=bool)
-def predict(payload: PredictRequest) -> bool:
+@router.post("/predict", response_model=PredictResponse)
+def predict(payload: PredictRequest) -> PredictResponse:
     return moderation_service.predict(payload)
 
 
-@router.post("/simple_predict", response_model=bool)
-async def simple_predict(payload: SimplePredictRequest) -> bool:
+@router.post("/simple_predict", response_model=PredictResponse)
+async def simple_predict(payload: SimplePredictRequest) -> PredictResponse:
     item_data = await item_repository.get_item_with_user(payload.item_id)
     if item_data is None:
         raise HTTPException(status_code=404, detail="item not found")

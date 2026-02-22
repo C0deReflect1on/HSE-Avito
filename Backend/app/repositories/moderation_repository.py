@@ -36,7 +36,7 @@ class ModerationRepository:
             raise WrongItemIdError()
 
     async def get_by_id(self, task_id: int) -> dict[str, Any] | None:
-        logger.info("in get_by_id:", task_id)
+        logger.info("in get_by_id: %s", task_id)
         pool = get_pool()
         row = await pool.fetchrow(
             """

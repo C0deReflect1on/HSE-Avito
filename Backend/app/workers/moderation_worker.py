@@ -72,7 +72,9 @@ async def main() -> None:
                     images_qty=item_data["images_qty"],
                 )
                 logger.info("before moderation_service.predict")
-                is_violation, probability = moderation_service.predict(req)
+                predict_response = moderation_service.predict(req)
+                is_violation = predict_response.is_violation
+                probability = predict_response.probability
 
                 await results_repo.update_completed(
                     task_id=task_id,
