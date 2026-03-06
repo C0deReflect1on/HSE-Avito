@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from fastapi import Depends
-from redis.asyncio import Redis
 from app.deps import get_kafka_producer
 from app.clients.kafka import KafkaProducer
 
@@ -17,7 +16,6 @@ from app.exceptions import WrongItemIdError
 from app.services.model_provider import ModerationModelProvider
 from app.services.moderation import AlwaysAvailableService, ModerationService
 from app.settings import MODERATION_TOPIC
-from app.settings import REDIS_URL
 
 
 router = APIRouter()
@@ -34,6 +32,11 @@ def predict(payload: PredictRequest) -> PredictResponse:
 
 @router.post("/simple_predict", response_model=PredictResponse)
 async def simple_predict(payload: SimplePredictRequest) -> PredictResponse:
+    cache_key = f"item_prediction:item_id:{payload.item_id}"
+    cached_result = await repository.get_cached_prediction(cache_key)
+    if cached_result is not None:
+        return cached_result
+
     item_data = await item_repository.get_item_with_user(payload.item_id)
     if item_data is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -47,7 +50,9 @@ async def simple_predict(payload: SimplePredictRequest) -> PredictResponse:
         category=item_data["category"],
         images_qty=item_data["images_qty"],
     )
-    return moderation_service.predict(request_payload)
+    result = moderation_service.predict(request_payload)
+    await repository.cache_prediction(cache_key, result)
+    return result
 
 
 @router.post("/async_predict")
@@ -77,10 +82,7 @@ async def close_item(payload: CloseItemRequest) -> dict[str, str]:
     if not deleted:
         raise HTTPException(status_code=404, detail="item not found")
 
-    redis = Redis.from_url(REDIS_URL, decode_responses=True)
-    try:
-        await redis.delete(f"item_prediction:item_id:{payload.item_id}")
-    finally:
-        await redis.aclose()
+    cache_key = f"item_prediction:item_id:{payload.item_id}"
+    await repository.delete_cached_prediction(cache_key)
 
     return {"status": "closed"}

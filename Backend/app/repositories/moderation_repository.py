@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import json
 from typing import Any, Protocol
 
 import asyncpg
@@ -49,6 +50,38 @@ class ModerationRepository:
         if self._cache_ref.storage is None:
             return None
         await self._cache_ref.storage.delete_prediction(cache_key)
+
+    async def get_cached_task_result(self, task_id: int) -> dict[str, Any] | None:
+        if self._cache_ref.storage is None:
+            return None
+        redis_client = getattr(self._cache_ref.storage, "_redis", None)
+        if redis_client is None:
+            return None
+        cache_key = f"moderation_task:{task_id}"
+        raw_value = await redis_client.get(cache_key)
+        if raw_value is None:
+            return None
+        return json.loads(raw_value)
+
+    async def cache_task_result(
+        self,
+        task_id: int,
+        result: dict[str, Any],
+        ttl_seconds: int = 1800,
+    ) -> None:
+        if self._cache_ref.storage is None:
+            return None
+        if result.get("status") not in ("completed", "failed"):
+            return None
+        redis_client = getattr(self._cache_ref.storage, "_redis", None)
+        if redis_client is None:
+            return None
+        cache_key = f"moderation_task:{task_id}"
+        await redis_client.set(
+            name=cache_key,
+            value=json.dumps(result),
+            ex=ttl_seconds,
+        )
     
     async def create_pending(self, payload: PredictRequest) -> int:
         pool = get_pool()

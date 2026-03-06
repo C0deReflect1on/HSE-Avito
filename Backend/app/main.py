@@ -3,18 +3,20 @@ import logging
 import asyncpg
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 
 from app import db
 from app.clients.kafka import KafkaProducer
 from app.routers import predict as predict_router_module
 from app.routers import moderation_result as moderation_result_router_module
+from app.storage.redis_cache import RedisPredictionCacheStorage
 from app.services.moderation import (
     ModerationError,
     ModelUnavailableError,
     ModelPredictionError,
 )
 
-from .settings import KAFKA_BOOTSTRAP
+from .settings import KAFKA_BOOTSTRAP, REDIS_URL, PREDICTION_CACHE_TTL_SECONDS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,6 +36,16 @@ async def startup() -> None:
         logger.exception("Failed to init DB or load the moderation model")
         raise
 
+    # Redis cache
+    try:
+        redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
+        await redis_client.ping()
+        cache_storage = RedisPredictionCacheStorage(redis_client, PREDICTION_CACHE_TTL_SECONDS)
+        predict_router_module.repository.configure_cache_storage(cache_storage)
+        app.state.redis_client = redis_client
+    except Exception:
+        app.state.redis_client = None
+
     # Kafka producer (single instance for whole app)
     try:
         producer = KafkaProducer(KAFKA_BOOTSTRAP)
@@ -47,6 +59,9 @@ async def shutdown() -> None:
     producer: KafkaProducer | None = getattr(app.state, "kafka_producer", None)
     if producer is not None:
         await producer.stop()
+    redis_client: Redis | None = getattr(app.state, "redis_client", None)
+    if redis_client is not None:
+        await redis_client.aclose()
     await db.disconnect()
 
 
