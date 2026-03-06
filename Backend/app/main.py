@@ -4,6 +4,7 @@ import asyncpg
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app import db
 from app.clients.kafka import KafkaProducer
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 app.include_router(predict_router_module.router)
 app.include_router(moderation_result_router_module.router)
+
+Instrumentator().instrument(app).expose(app)
 
 
 @app.on_event("startup")

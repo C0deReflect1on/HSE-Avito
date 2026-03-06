@@ -1,9 +1,16 @@
 from dataclasses import dataclass
 import logging
+import time
 from typing import Protocol
 
 from app.repositories.moderation_repository import ModerationRepository
 from app.schemas import PredictRequest, PredictResponse
+from app.metrics import (
+    PREDICTIONS_TOTAL,
+    PREDICTION_DURATION,
+    PREDICTION_ERRORS_TOTAL,
+    MODEL_PREDICTION_PROBABILITY,
+)
 
 
 class ModerationError(Exception):
@@ -50,7 +57,18 @@ class ModerationService:
         self._availability_checker.ensure_available()
         normalized_features = self._prepare_features(payload)
         feature_vector = list(normalized_features.values())
-        probability = self._model_provider.predict_proba(feature_vector)
+        
+        start_time = time.time()
+        try:
+            probability = self._model_provider.predict_proba(feature_vector)
+        except Exception as e:
+            PREDICTION_ERRORS_TOTAL.labels(error_type="prediction_error").inc()
+            raise
+        finally:
+            duration = time.time() - start_time
+            PREDICTION_DURATION.observe(duration)
+
+        MODEL_PREDICTION_PROBABILITY.observe(probability)
 
         logger = logging.getLogger(__name__)
         logger.info(
@@ -67,5 +85,9 @@ class ModerationService:
             result,
             probability,
         )
+        
+        result_label = "violation" if result else "no_violation"
+        PREDICTIONS_TOTAL.labels(result=result_label).inc()
+        
         self._repository.save_prediction(payload, result)
         return PredictResponse(is_violation=result, probability=probability)

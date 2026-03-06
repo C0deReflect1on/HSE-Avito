@@ -55,6 +55,26 @@ services:
     depends_on:
       - redpanda
 
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8003
+    ports:
+      - "8003:8003"
+    environment:
+      DATABASE_DSN: postgresql://app:app@postgres:5432/avito
+      KAFKA_BOOTSTRAP: redpanda:29092
+      REDIS_URL: redis://redis:6379/0
+      MODERATION_TOPIC: moderation
+      DLQ_TOPIC: dlq
+      PREDICTION_CACHE_TTL_SECONDS: 900
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      redpanda:
+        condition: service_started
+
   moderation_worker:
     build: .
     command: python -m app.workers.moderation_worker
@@ -85,9 +105,26 @@ services:
     ports:
       - "6379:6379"
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+
+  prometheus:
+    image: prom/prometheus:latest
     volumes:
-      - /path/to/local/dаta:/root/redis
-      - /path/to/local/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  grafana:
+    image: grafana/grafana:latest
     environment:
-      - REDIS_PORT=6379
-      - REDIS_DATABASES=1
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
