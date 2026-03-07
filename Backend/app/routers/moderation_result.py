@@ -13,6 +13,9 @@ router = APIRouter()
 @router.get("/moderation_result/{task_id}")
 async def moderation_result(task_id: int) -> dict:
     logger.info("in moderation_result: %s", task_id)
+    cached_result = await repository.get_cached_task_result(task_id)
+    if cached_result is not None:
+        return cached_result
     row = await repository.get_by_id(task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="task not found")
@@ -33,4 +36,5 @@ async def moderation_result(task_id: int) -> dict:
     if row["status"] == "failed":
         resp["error_message"] = row["error_message"]
 
+    await repository.cache_task_result(task_id, resp)
     return resp

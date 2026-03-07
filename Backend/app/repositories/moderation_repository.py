@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+import json
+import time
 from typing import Any, Protocol
 
 import asyncpg
@@ -6,6 +8,7 @@ from app.schemas import PredictRequest, PredictResponse
 from app.exceptions import WrongItemIdError
 from app.storage.memory import InMemoryStorage
 from app.db import get_pool
+from app.metrics import DB_QUERY_DURATION
 import logging
 
 logger = logging.getLogger(__name__)
@@ -49,9 +52,42 @@ class ModerationRepository:
         if self._cache_ref.storage is None:
             return None
         await self._cache_ref.storage.delete_prediction(cache_key)
+
+    async def get_cached_task_result(self, task_id: int) -> dict[str, Any] | None:
+        if self._cache_ref.storage is None:
+            return None
+        redis_client = getattr(self._cache_ref.storage, "_redis", None)
+        if redis_client is None:
+            return None
+        cache_key = f"moderation_task:{task_id}"
+        raw_value = await redis_client.get(cache_key)
+        if raw_value is None:
+            return None
+        return json.loads(raw_value)
+
+    async def cache_task_result(
+        self,
+        task_id: int,
+        result: dict[str, Any],
+        ttl_seconds: int = 1800,
+    ) -> None:
+        if self._cache_ref.storage is None:
+            return None
+        if result.get("status") not in ("completed", "failed"):
+            return None
+        redis_client = getattr(self._cache_ref.storage, "_redis", None)
+        if redis_client is None:
+            return None
+        cache_key = f"moderation_task:{task_id}"
+        await redis_client.set(
+            name=cache_key,
+            value=json.dumps(result),
+            ex=ttl_seconds,
+        )
     
     async def create_pending(self, payload: PredictRequest) -> int:
         pool = get_pool()
+        start_time = time.time()
         try:
             task_id = await pool.fetchval(
                 """
@@ -64,60 +100,83 @@ class ModerationRepository:
             return int(task_id)
         except asyncpg.exceptions.ForeignKeyViolationError:
             raise WrongItemIdError()
+        finally:
+            duration = time.time() - start_time
+            DB_QUERY_DURATION.labels(query_type="insert").observe(duration)
 
     async def get_by_id(self, task_id: int) -> dict[str, Any] | None:
         logger.info("in get_by_id: %s", task_id)
         pool = get_pool()
-        row = await pool.fetchrow(
-            """
-            SELECT
-                id,
-                item_id,
-                status,
-                is_violation,
-                probability,
-                error_message,
-                created_at,
-                processed_at
-            FROM moderation_results
-            WHERE id = $1
-            """,
-            task_id,
-        )
-        return dict(row) if row is not None else None
+        start_time = time.time()
+        try:
+            row = await pool.fetchrow(
+                """
+                SELECT
+                    id,
+                    item_id,
+                    status,
+                    is_violation,
+                    probability,
+                    error_message,
+                    created_at,
+                    processed_at
+                FROM moderation_results
+                WHERE id = $1
+                """,
+                task_id,
+            )
+            return dict(row) if row is not None else None
+        finally:
+            duration = time.time() - start_time
+            DB_QUERY_DURATION.labels(query_type="select").observe(duration)
     
     async def update_completed(self, task_id: int, is_violation: bool, probability: float) -> None:
         pool = get_pool()
-        await pool.execute(
-            """
-            UPDATE moderation_results
-            SET status = 'completed', is_violation = $2, probability = $3, processed_at = NOW()
-            WHERE id = $1
-            """,
-            task_id, is_violation, probability)
+        start_time = time.time()
+        try:
+            await pool.execute(
+                """
+                UPDATE moderation_results
+                SET status = 'completed', is_violation = $2, probability = $3, processed_at = NOW()
+                WHERE id = $1
+                """,
+                task_id, is_violation, probability)
+        finally:
+            duration = time.time() - start_time
+            DB_QUERY_DURATION.labels(query_type="update").observe(duration)
     
     async def update_failed(self, task_id: int, error_message: str) -> None:
         pool = get_pool()
-        await pool.execute(
-            """
-            UPDATE moderation_results
-            SET status = 'failed', error_message = $2, processed_at = NOW()
-            WHERE id = $1
-            """,
-            task_id, error_message)
+        start_time = time.time()
+        try:
+            await pool.execute(
+                """
+                UPDATE moderation_results
+                SET status = 'failed', error_message = $2, processed_at = NOW()
+                WHERE id = $1
+                """,
+                task_id, error_message)
+        finally:
+            duration = time.time() - start_time
+            DB_QUERY_DURATION.labels(query_type="update").observe(duration)
 
     async def update_status(self, task_id: int, status: str, error: str | None = None) -> None:
         pool = get_pool()
-        await pool.execute(
-            """
-            UPDATE moderation_results
-            SET status = $2, error_message = $3, processed_at = NOW()
-            WHERE id = $1
-            """,
-            task_id,
-            status,
-            error,
-        )
+        start_time = time.time()
+        try:
+            await pool.execute(
+                """
+                UPDATE moderation_results
+                SET status = $2, error_message = $3, processed_at = NOW()
+                WHERE id = $1
+                """,
+                task_id,
+                status,
+                error,
+            )
+        finally:
+            duration = time.time() - start_time
+            DB_QUERY_DURATION.labels(query_type="update").observe(duration)
 
 
 storage = InMemoryStorage()

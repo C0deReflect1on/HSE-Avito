@@ -8,3 +8,5 @@ yandex-pgmigrate
 python-dotenv
 aiokafka
 redis
+prometheus-client
+prometheus-fastapi-instrumentator
