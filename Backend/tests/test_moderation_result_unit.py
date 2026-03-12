@@ -1,5 +1,9 @@
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
 
 def test_moderation_result_pending(client):
     row = {"id": 10, "status": "pending"}

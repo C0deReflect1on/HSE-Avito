@@ -8,6 +8,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app import db
 from app.clients.kafka import KafkaProducer
+from app.routers import auth as auth_router_module
 from app.routers import predict as predict_router_module
 from app.routers import moderation_result as moderation_result_router_module
 from app.storage.redis_cache import RedisPredictionCacheStorage
@@ -23,6 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+app.include_router(auth_router_module.router)
 app.include_router(predict_router_module.router)
 app.include_router(moderation_result_router_module.router)
 

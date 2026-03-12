@@ -1,2 +1,2 @@
-conn: "dbname=avito user=app host=localhost port=5432 password=app"
+conn: "dbname=hw user=postgres host=localhost port=5435 password=postgres"
 base_dir: db
