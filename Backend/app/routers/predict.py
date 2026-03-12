@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi import Depends
 from app.deps import get_kafka_producer
 from app.clients.kafka import KafkaProducer
+from app.dependencies import get_current_account
 
 from app.repositories.moderation_repository import repository
 from app.repositories.items import ItemRepository
@@ -11,6 +12,7 @@ from app.schemas import (
     AsyncPredictResponse,
     PredictResponse,
     CloseItemRequest,
+    Account,
 )
 from app.exceptions import WrongItemIdError
 from app.services.model_provider import ModerationModelProvider
@@ -26,12 +28,20 @@ item_repository = ItemRepository()
 
 
 @router.post("/predict", response_model=PredictResponse)
-def predict(payload: PredictRequest) -> PredictResponse:
+def predict(
+    payload: PredictRequest,
+    account: Account = Depends(get_current_account),
+) -> PredictResponse:
+    _ = account
     return moderation_service.predict(payload)
 
 
 @router.post("/simple_predict", response_model=PredictResponse)
-async def simple_predict(payload: SimplePredictRequest) -> PredictResponse:
+async def simple_predict(
+    payload: SimplePredictRequest,
+    account: Account = Depends(get_current_account),
+) -> PredictResponse:
+    _ = account
     cache_key = f"item_prediction:item_id:{payload.item_id}"
     cached_result = await repository.get_cached_prediction(cache_key)
     if cached_result is not None:
@@ -58,8 +68,10 @@ async def simple_predict(payload: SimplePredictRequest) -> PredictResponse:
 @router.post("/async_predict")
 async def async_predict(
     payload: SimplePredictRequest,
-    producer: KafkaProducer = Depends(get_kafka_producer)
+    producer: KafkaProducer = Depends(get_kafka_producer),
+    account: Account = Depends(get_current_account),
 ) -> AsyncPredictResponse:
+    _ = account
     task_id = None
     try:
         task_id = await repository.create_pending(payload)
@@ -77,7 +89,11 @@ async def async_predict(
 
 
 @router.post("/close")
-async def close_item(payload: CloseItemRequest) -> dict[str, str]:
+async def close_item(
+    payload: CloseItemRequest,
+    account: Account = Depends(get_current_account),
+) -> dict[str, str]:
+    _ = account
     deleted = await item_repository.close_item(payload.item_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="item not found")

@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.dependencies import get_current_account
 from app.repositories.moderation_repository import repository
+from app.schemas import Account
 import logging
 
 logger = logging.getLogger(__name__)
@@ -11,7 +13,11 @@ router = APIRouter()
 
 
 @router.get("/moderation_result/{task_id}")
-async def moderation_result(task_id: int) -> dict:
+async def moderation_result(
+    task_id: int,
+    account: Account = Depends(get_current_account),
+) -> dict:
+    _ = account
     logger.info("in moderation_result: %s", task_id)
     cached_result = await repository.get_cached_task_result(task_id)
     if cached_result is not None:

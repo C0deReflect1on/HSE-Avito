@@ -10,3 +10,4 @@ aiokafka
 redis
 prometheus-client
 prometheus-fastapi-instrumentator
+pyjwt>=2.8.0
