@@ -9,6 +9,8 @@ from app.services.moderation import (
     ModelUnavailableError,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     "probability,payload_overrides,expected",

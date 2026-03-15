@@ -35,3 +35,14 @@ class AsyncPredictResponse(BaseModel):
 
 class CloseItemRequest(BaseModel):
     item_id: int = Field(gt=0)
+
+
+class Account(BaseModel):
+    id: int
+    login: str
+    is_blocked: bool
+
+
+class LoginRequest(BaseModel):
+    login: str
+    password: str

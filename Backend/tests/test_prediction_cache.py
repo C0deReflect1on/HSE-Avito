@@ -9,7 +9,7 @@ from app.schemas import PredictResponse
 from app.storage.memory import InMemoryStorage
 from app.storage.redis_cache import RedisPredictionCacheStorage
 
-
+@pytest.mark.unit
 def test_repository_get_cached_prediction_calls_storage() -> None:
     async def _run() -> None:
         storage = AsyncMock()
@@ -26,6 +26,7 @@ def test_repository_get_cached_prediction_calls_storage() -> None:
     asyncio.run(_run())
 
 
+@pytest.mark.unit
 def test_repository_cache_prediction_calls_storage() -> None:
     async def _run() -> None:
         storage = AsyncMock()
@@ -40,6 +41,7 @@ def test_repository_cache_prediction_calls_storage() -> None:
     asyncio.run(_run())
 
 
+@pytest.mark.unit
 def test_repository_cache_methods_without_storage_do_not_fail() -> None:
     async def _run() -> None:
         repo = ModerationRepository(InMemoryStorage())

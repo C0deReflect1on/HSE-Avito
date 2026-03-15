@@ -1,14 +1,16 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: avito
+      POSTGRES_DB: hw
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d avito"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hw"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -61,7 +63,7 @@ services:
     ports:
       - "8003:8003"
     environment:
-      DATABASE_DSN: postgresql://app:app@postgres:5432/avito
+      DATABASE_DSN: postgresql://postgres:postgres@postgres:5432/hw
       KAFKA_BOOTSTRAP: redpanda:29092
       REDIS_URL: redis://redis:6379/0
       MODERATION_TOPIC: moderation
@@ -79,7 +81,7 @@ services:
     build: .
     command: python -m app.workers.moderation_worker
     environment:
-      DATABASE_DSN: postgresql://app:app@postgres:5432/avito
+      DATABASE_DSN: postgresql://postgres:postgres@postgres:5432/hw
       KAFKA_BOOTSTRAP: redpanda:29092
     depends_on:
       postgres:
@@ -91,7 +93,7 @@ services:
     build: .
     command: python -m app.workers.dlq_worker
     environment:
-      DATABASE_DSN: postgresql://app:app@postgres:5432/avito
+      DATABASE_DSN: postgresql://postgres:postgres@postgres:5432/hw
       KAFKA_BOOTSTRAP: redpanda:29092
     depends_on:
       postgres:
@@ -128,3 +130,6 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+
+volumes:
+  pgdata:

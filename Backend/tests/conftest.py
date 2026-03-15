@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncpg
 import pytest
 
+from app.dependencies import get_current_account
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas import Account
 
 MIGRATION_PATH = Path(__file__).resolve().parents[1] / "db" / "migrations"
 
@@ -73,7 +75,7 @@ def truncate_tables(request) -> None:
 
     database_dsn = request.getfixturevalue("database_dsn")
     request.getfixturevalue("apply_migrations")
-    sql = "TRUNCATE moderation_results, items, users RESTART IDENTITY CASCADE;"
+    sql = "TRUNCATE moderation_results, items, users, account RESTART IDENTITY CASCADE;"
     asyncio.run(_execute_sql(database_dsn, sql))
     yield
     asyncio.run(_execute_sql(database_dsn, sql))
@@ -87,6 +89,10 @@ def _make_mock_kafka_producer():
     return mock
 
 
+async def _auth_override_account() -> Account:
+    return Account(id=1, login="test-user", is_blocked=False)
+
+
 @pytest.fixture
 def client() -> TestClient:
     mock_producer = _make_mock_kafka_producer()
@@ -95,8 +101,10 @@ def client() -> TestClient:
     ), patch("app.main.db.disconnect", new=AsyncMock(return_value=None)), patch(
         "app.main.predict_router_module.model_provider.load", return_value=None
     ):
+        app.dependency_overrides[get_current_account] = _auth_override_account
         with TestClient(app) as client:
             yield client
+        app.dependency_overrides.pop(get_current_account, None)
 
 
 @pytest.fixture
@@ -108,8 +116,10 @@ def client_with_kafka_mock():
     ), patch("app.main.db.disconnect", new=AsyncMock(return_value=None)), patch(
         "app.main.predict_router_module.model_provider.load", return_value=None
     ):
+        app.dependency_overrides[get_current_account] = _auth_override_account
         with TestClient(app) as client:
             yield client, mock_producer
+        app.dependency_overrides.pop(get_current_account, None)
 
 
 @pytest.fixture
