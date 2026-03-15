@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sentence-transformers
+torch
+pydantic
+psutil
+transformers
+onnxruntime
+optimum[onnxruntime]
