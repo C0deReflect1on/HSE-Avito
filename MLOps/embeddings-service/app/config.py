@@ -11,6 +11,8 @@ class Settings:
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
     max_batch_size: int = int(os.getenv("MAX_BATCH_SIZE", "32"))
+    batch_window_ms: int = int(os.getenv("BATCH_WINDOW_MS", "50"))
+    batching_enabled: bool = os.getenv("BATCHING_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 settings = Settings()

@@ -23,8 +23,14 @@ async def lifespan(app: FastAPI):
     else:
         raise ValueError("INFERENCE_BACKEND must be either 'hf' or 'onnx'")
 
-    app.state.inference_service = InferenceService(embedder)
+    app.state.inference_service = InferenceService(
+        embedder,
+        max_batch_size=settings.max_batch_size,
+        batch_window_ms=settings.batch_window_ms,
+        batching_enabled=settings.batching_enabled,
+    )
     yield
+    app.state.inference_service.shutdown()
 
 
 app = FastAPI(title="Embeddings Service", lifespan=lifespan)

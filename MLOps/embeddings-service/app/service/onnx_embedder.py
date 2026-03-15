@@ -38,4 +38,4 @@ class OnnxEmbedder:
         }
 
         outputs = self._session.run(None, ort_inputs)
-        return outputs[1]
+        return outputs[1].tolist()
