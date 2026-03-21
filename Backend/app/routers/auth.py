@@ -1,18 +1,20 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.exceptions import AccountBlockedError, AuthenticationError
 from app.repositories.account_repository import AccountRepository
 from app.schemas import LoginRequest
 from app.services.auth_service import AuthService
+from app.dependencies import get_account_repository, get_auth_service
 
 router = APIRouter()
 
 
 @router.post("/login")
-async def login(payload: LoginRequest, response: Response) -> dict[str, str | int]:
-    repository = AccountRepository()
-    auth_service = AuthService(repository)
-
+async def login(
+    payload: LoginRequest,
+    response: Response,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> dict[str, str | int]:
     try:
         account = await auth_service.authenticate(payload.login, payload.password)
     except AuthenticationError:

@@ -137,18 +137,17 @@ def test_async_predict_wrong_item_id(client):
 
 
 def test_close_item_deletes_item_and_cache(client):
-    redis_mock = AsyncMock()
-    redis_mock.aclose = AsyncMock(return_value=None)
     with patch(
         "app.repositories.items.ItemRepository.close_item",
         new=AsyncMock(return_value=True),
     ), patch(
-        "app.routers.predict.Redis.from_url", return_value=redis_mock
-    ):
+        "app.routers.predict.repository._cache_ref.storage",
+    ) as mock_storage:
+        mock_storage.delete_prediction = AsyncMock(return_value=None)
         response = client.post("/close", json={"item_id": 50})
     assert response.status_code == 200
     assert response.json() == {"status": "closed"}
-    redis_mock.delete.assert_awaited_once_with("item_prediction:item_id:50")
+    mock_storage.delete_prediction.assert_awaited_once_with("item_prediction:item_id:50")
 
 
 def test_close_item_not_found(client):

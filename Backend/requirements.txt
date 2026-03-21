@@ -11,3 +11,7 @@ redis
 prometheus-client
 prometheus-fastapi-instrumentator
 pyjwt>=2.8.0
+pytest
+pytest-asyncio
+mlflow
+sentry-sdk[fastapi]

@@ -12,6 +12,9 @@ from app.schemas import PredictResponse
 pytestmark = pytest.mark.integration
 
 
+from conftest import db_connection
+
+
 async def _seed_user_and_item(
     dsn: str,
     seller_id: int,
@@ -22,8 +25,7 @@ async def _seed_user_and_item(
     category: int,
     images_qty: int,
 ) -> None:
-    conn = await asyncpg.connect(dsn)
-    try:
+    async with db_connection(dsn) as conn:
         await conn.execute(
             "INSERT INTO users (id, is_verified_seller) VALUES ($1, $2)",
             seller_id,
@@ -41,8 +43,6 @@ async def _seed_user_and_item(
             category,
             images_qty,
         )
-    finally:
-        await conn.close()
 
 
 # --- Worker message processing tests ---
@@ -121,8 +121,7 @@ def test_worker_processes_message_success(database_dsn):
             await main()
 
         # Проверка: задача обновлена на completed
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             row = await conn.fetchrow(
                 "SELECT status, is_violation FROM moderation_results WHERE id = $1",
                 task_id,
@@ -130,8 +129,6 @@ def test_worker_processes_message_success(database_dsn):
             assert row is not None
             assert row["status"] == "completed"
             assert row["is_violation"] is True
-        finally:
-            await conn.close()
 
         return mock_dlq
 
@@ -193,8 +190,7 @@ def test_worker_skips_model_when_cache_hit(database_dsn):
 
             assert mock_prov.predict_proba.call_count == 0
 
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             row = await conn.fetchrow(
                 "SELECT status, is_violation, probability FROM moderation_results WHERE id = $1",
                 task_id,
@@ -202,8 +198,6 @@ def test_worker_skips_model_when_cache_hit(database_dsn):
             assert row is not None
             assert row["status"] == "completed"
             assert row["is_violation"] is False
-        finally:
-            await conn.close()
 
     asyncio.run(_run())
 
@@ -258,13 +252,10 @@ def test_dlq_worker_marks_failed_after_3_retries(database_dsn):
             category=1,
             images_qty=0,
         )
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             task_id = await conn.fetchval(
                 "INSERT INTO moderation_results (item_id, status) VALUES (99, 'pending') RETURNING id"
             )
-        finally:
-            await conn.close()
 
         msg = FakeMessage(
             json.dumps({
@@ -296,8 +287,7 @@ def test_dlq_worker_marks_failed_after_3_retries(database_dsn):
         mock_producer.send_and_wait.assert_not_called()
 
         # Статус должен быть failed
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             row = await conn.fetchrow(
                 "SELECT status, error_message FROM moderation_results WHERE id = $1",
                 task_id,
@@ -305,8 +295,6 @@ def test_dlq_worker_marks_failed_after_3_retries(database_dsn):
             assert row is not None
             assert row["status"] == "failed"
             assert "3 retries" in row["error_message"]
-        finally:
-            await conn.close()
 
     asyncio.run(_run())
 

@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,12 +28,19 @@ def _load_all_migrations_sql() -> str:
     return "\n\n".join(parts)
 
 
-async def _execute_sql(dsn: str, sql: str) -> None:
+@asynccontextmanager
+async def db_connection(dsn: str):
+    """Async context manager for database connections."""
     conn = await asyncpg.connect(dsn)
     try:
-        await conn.execute(sql)
+        yield conn
     finally:
         await conn.close()
+
+
+async def _execute_sql(dsn: str, sql: str) -> None:
+    async with db_connection(dsn) as conn:
+        await conn.execute(sql)
 
 
 @pytest.fixture(scope="session")
@@ -50,12 +58,9 @@ def database_dsn() -> str:
 @pytest.fixture(scope="session")
 def apply_migrations(database_dsn: str) -> None:
     async def setup():
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             await conn.execute("DROP SCHEMA public CASCADE;")
             await conn.execute("CREATE SCHEMA public;")
-        finally:
-            await conn.close()
 
         sql = _load_all_migrations_sql()
         await _execute_sql(database_dsn, sql)

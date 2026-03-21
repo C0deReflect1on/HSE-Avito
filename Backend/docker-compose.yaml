@@ -69,6 +69,9 @@ services:
       MODERATION_TOPIC: moderation
       DLQ_TOPIC: dlq
       PREDICTION_CACHE_TTL_SECONDS: 900
+      SENTRY_DSN: ""
+      SENTRY_ENVIRONMENT: development
+      SENTRY_TRACES_SAMPLE_RATE: 1.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,6 +111,71 @@ services:
       - "6379:6379"
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
 
+  sentry-redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+
+  sentry-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sentry
+      POSTGRES_PASSWORD: sentry
+      POSTGRES_DB: sentry
+    volumes:
+      - sentry-pgdata:/var/lib/postgresql/data
+
+  sentry:
+    image: sentry:latest
+    ports:
+      - "9000:9000"
+    environment:
+      SENTRY_SECRET_KEY: "verysecretkey123456789012345678901234567890"
+      SENTRY_POSTGRES_HOST: sentry-postgres
+      SENTRY_POSTGRES_PORT: 5432
+      SENTRY_DB_NAME: sentry
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+      SENTRY_REDIS_HOST: sentry-redis
+      SENTRY_REDIS_PORT: 6379
+      SENTRY_SINGLE_ORGANIZATION: "true"
+    depends_on:
+      - sentry-postgres
+      - sentry-redis
+    command: ["sentry", "run", "web"]
+
+  sentry-worker:
+    image: sentry:latest
+    environment:
+      SENTRY_SECRET_KEY: "verysecretkey123456789012345678901234567890"
+      SENTRY_POSTGRES_HOST: sentry-postgres
+      SENTRY_POSTGRES_PORT: 5432
+      SENTRY_DB_NAME: sentry
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+      SENTRY_REDIS_HOST: sentry-redis
+      SENTRY_REDIS_PORT: 6379
+    depends_on:
+      - sentry-postgres
+      - sentry-redis
+    command: ["sentry", "run", "worker"]
+
+  sentry-cron:
+    image: sentry:latest
+    environment:
+      SENTRY_SECRET_KEY: "verysecretkey123456789012345678901234567890"
+      SENTRY_POSTGRES_HOST: sentry-postgres
+      SENTRY_POSTGRES_PORT: 5432
+      SENTRY_DB_NAME: sentry
+      SENTRY_DB_USER: sentry
+      SENTRY_DB_PASSWORD: sentry
+      SENTRY_REDIS_HOST: sentry-redis
+      SENTRY_REDIS_PORT: 6379
+    depends_on:
+      - sentry-postgres
+      - sentry-redis
+    command: ["sentry", "run", "cron"]
+
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -133,3 +201,4 @@ services:
 
 volumes:
   pgdata:
+  sentry-pgdata:
