@@ -12,7 +12,12 @@ from app.repositories.moderation_repository import ModerationRepository
 from app.storage.memory import InMemoryStorage
 from app.storage.redis_cache import RedisPredictionCacheStorage
 from app.services.model_provider import ModerationModelProvider
-from app.services.moderation import AlwaysAvailableService, ModerationService
+from app.services.moderation import (
+    AlwaysAvailableService,
+    ModerationService,
+    ModelUnavailableError,
+    ModelPredictionError,
+)
 from app.schemas import PredictRequest
 from app.settings import (
     KAFKA_BOOTSTRAP,
@@ -21,6 +26,8 @@ from app.settings import (
     CONSUMER_GROUP,
     REDIS_URL,
     PREDICTION_CACHE_TTL_SECONDS,
+    MAX_RETRIES,
+    RETRY_DELAY_SECONDS,
 )
 
 
@@ -96,20 +103,45 @@ async def main() -> None:
                     await consumer.commit()
                     continue
 
-                logger.info("before moderation_service.predict")
-                predict_response = moderation_service.predict(req)
-                is_violation = predict_response.is_violation
-                probability = predict_response.probability
+                attempt = 0
+                last_error = None
+                
+                while attempt < MAX_RETRIES:
+                    try:
+                        logger.info("before moderation_service.predict")
+                        predict_response = moderation_service.predict(req)
+                        is_violation = predict_response.is_violation
+                        probability = predict_response.probability
 
-                await results_repo.update_completed(
-                    task_id=task_id,
-                    is_violation=is_violation,
-                    probability=probability
-                )
-                await results_repo.cache_prediction(item_cache_key, predict_response)
+                        await results_repo.update_completed(
+                            task_id=task_id,
+                            is_violation=is_violation,
+                            probability=probability
+                        )
+                        await results_repo.cache_prediction(item_cache_key, predict_response)
 
-                logger.info("after update_completed moderation_service.predict")
-                await consumer.commit()
+                        logger.info("after update_completed moderation_service.predict")
+                        await consumer.commit()
+                        break
+                        
+                    except (ModelUnavailableError, ModelPredictionError) as e:
+                        attempt += 1
+                        last_error = e
+                        if attempt < MAX_RETRIES:
+                            logger.warning(
+                                "Temporary error (attempt %d/%d): %s. Retrying in %d seconds...",
+                                attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS
+                            )
+                            await asyncio.sleep(RETRY_DELAY_SECONDS)
+                        else:
+                            logger.error(
+                                "Max retries reached (%d/%d). Sending to DLQ: %s",
+                                attempt, MAX_RETRIES, e
+                            )
+                            raise
+                
+                if last_error is not None and attempt >= MAX_RETRIES:
+                    raise last_error
 
             except Exception as e:
                 logger.exception("Moderation failed: %s", e)

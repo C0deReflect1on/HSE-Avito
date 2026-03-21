@@ -5,6 +5,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from prometheus_fastapi_instrumentator import Instrumentator
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.asyncpg import AsyncPGIntegration
 
 from app import db
 from app.clients.kafka import KafkaProducer
@@ -18,10 +21,28 @@ from app.services.moderation import (
     ModelPredictionError,
 )
 
-from .settings import KAFKA_BOOTSTRAP, REDIS_URL, PREDICTION_CACHE_TTL_SECONDS
+from .settings import (
+    KAFKA_BOOTSTRAP,
+    REDIS_URL,
+    PREDICTION_CACHE_TTL_SECONDS,
+    SENTRY_DSN,
+    SENTRY_ENVIRONMENT,
+    SENTRY_TRACES_SAMPLE_RATE,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            FastApiIntegration(),
+            AsyncPGIntegration(),
+        ],
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        environment=SENTRY_ENVIRONMENT,
+    )
 
 app = FastAPI()
 app.include_router(auth_router_module.router)
@@ -77,21 +98,25 @@ async def root() -> dict:
 
 @app.exception_handler(ModerationError)
 def handle_moderation_error(request: Request, exc: ModerationError) -> JSONResponse:
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 @app.exception_handler(ModelPredictionError)
 def handle_model_prediction_error(request: Request, exc: ModelPredictionError) -> JSONResponse:
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 @app.exception_handler(ModelUnavailableError)
 def handle_model_unavailable(request: Request, exc: ModelUnavailableError) -> JSONResponse:
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.exception_handler(asyncpg.exceptions.UndefinedTableError)
 def handle_missing_tables(request: Request, exc: asyncpg.PostgresError) -> JSONResponse:
+    sentry_sdk.capture_exception(exc)
     return JSONResponse(
         status_code=503,
         content={"detail": "database schema is not initialized"},

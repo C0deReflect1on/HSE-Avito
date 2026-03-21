@@ -7,12 +7,10 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from app import db
 from app.repositories.moderation_repository import ModerationRepository
 from app.storage.memory import InMemoryStorage
-from app.settings import KAFKA_BOOTSTRAP, MODERATION_TOPIC, DLQ_TOPIC
+from app.settings import KAFKA_BOOTSTRAP, MODERATION_TOPIC, DLQ_TOPIC, MAX_RETRIES
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-MAX_RETRIES = 3
 
 
 async def main() -> None:

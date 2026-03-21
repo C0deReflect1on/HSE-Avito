@@ -7,17 +7,19 @@ This file describes the main directories and files in the `Backend/` project and
 - `app/` - Main application code (API, business logic, data access, workers).
 - `db/` - Database migration scripts and migration runner config.
 - `grafana/` - Grafana dashboard and provisioning configuration.
+- `scripts/` - Utility scripts for setup and operations (MLflow model registration).
 - `tests/` - Automated tests (unit, integration, async, cache).
 - `Dockerfile` - Container image build instructions for the backend service.
 - `docker-compose.yaml` - Local/dev stack orchestration (app + infra services).
 - `main.py` - Entry point script for launching the application.
-- `requirements.txt` - Python dependencies (includes `pyjwt` for JWT auth).
+- `requirements.txt` - Python dependencies (includes `pyjwt` for JWT auth, `mlflow` for model management).
 - `pytest.ini` - Pytest configuration (markers: `unit`, `integration`).
 - `prometheus.yml` - Prometheus scrape/configuration file.
 - `load_test.py` - Python load testing script.
 - `load_test.sh` - Shell script for running load tests.
 - `auth_smoke_test.sh` - Shell script for manual auth smoke testing via curl.
 - `MONITORING.md` - Monitoring/observability setup and usage documentation.
+- `CODE_STYLE.md` - Code style guide and conventions for the project.
 
 ## `app/`
 
@@ -54,7 +56,7 @@ This file describes the main directories and files in the `Backend/` project and
 ### `app/services/`
 
 - `moderation.py` - Core moderation business logic/orchestration.
-- `model_provider.py` - ML model/provider loading and inference adapter.
+- `model_provider.py` - ML model/provider loading and inference adapter (supports local and MLflow modes).
 - `auth_service.py` - JWT auth service (authenticate, create/verify token).
 - `password_hasher.py` - Password hashing utility (md5).
 - `__init__.py` - Package marker for service exports.
@@ -65,10 +67,19 @@ This file describes the main directories and files in the `Backend/` project and
 - `memory.py` - In-memory fallback/local cache implementation.
 - `__init__.py` - Shared storage interfaces or exports.
 
+### `app/utils/`
+
+- `metrics.py` - Async context managers for database query metrics tracking.
+- `__init__.py` - Package marker for utility exports.
+
 ### `app/workers/`
 
 - `moderation_worker.py` - Background moderation processing worker.
 - `dlq_worker.py` - Dead-letter queue worker for failed message handling.
+
+## `scripts/`
+
+- `register_model_mlflow.py` - Script to train and register moderation model in MLflow Model Registry.
 
 ## `db/`
 
