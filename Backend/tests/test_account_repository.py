@@ -7,6 +7,8 @@ from app import db
 from app.repositories.account_repository import AccountRepository
 from app.services.password_hasher import hash_password
 
+from conftest import db_connection
+
 pytestmark = pytest.mark.integration
 
 
@@ -30,11 +32,8 @@ def test_create_account(database_dsn: str):
 
     # Проверяем именно состояние БД: пароль должен храниться как hash.
     async def _read_password():
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             return await conn.fetchval("SELECT password FROM account WHERE id = $1", account.id)
-        finally:
-            await conn.close()
 
     stored_password = asyncio.run(_read_password())
     assert stored_password == hash_password("qwerty")
@@ -58,8 +57,7 @@ def test_create_duplicate_login(database_dsn: str):
 
 def test_get_by_id_found(database_dsn: str):
     async def _run():
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             account_id = await conn.fetchval(
                 """
                 INSERT INTO account (login, password, is_blocked)
@@ -69,8 +67,6 @@ def test_get_by_id_found(database_dsn: str):
                 "bob",
                 hash_password("pass"),
             )
-        finally:
-            await conn.close()
 
         await db.connect(database_dsn)
         repo = AccountRepository()
@@ -96,15 +92,12 @@ def test_get_by_id_not_found(database_dsn: str):
 
 def test_get_by_login(database_dsn: str):
     async def _run():
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             await conn.execute(
                 "INSERT INTO account (login, password) VALUES ($1, $2)",
                 "john",
                 hash_password("pass"),
             )
-        finally:
-            await conn.close()
 
         await db.connect(database_dsn)
         repo = AccountRepository()
@@ -119,15 +112,12 @@ def test_get_by_login(database_dsn: str):
 
 def test_get_by_credentials_valid(database_dsn: str):
     async def _run():
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             await conn.execute(
                 "INSERT INTO account (login, password) VALUES ($1, $2)",
                 "sam",
                 hash_password("secret"),
             )
-        finally:
-            await conn.close()
 
         await db.connect(database_dsn)
         repo = AccountRepository()
@@ -142,15 +132,12 @@ def test_get_by_credentials_valid(database_dsn: str):
 
 def test_get_by_credentials_invalid(database_dsn: str):
     async def _run():
-        conn = await asyncpg.connect(database_dsn)
-        try:
+        async with db_connection(database_dsn) as conn:
             await conn.execute(
                 "INSERT INTO account (login, password) VALUES ($1, $2)",
                 "jane",
                 hash_password("secret"),
             )
-        finally:
-            await conn.close()
 
         await db.connect(database_dsn)
         repo = AccountRepository()

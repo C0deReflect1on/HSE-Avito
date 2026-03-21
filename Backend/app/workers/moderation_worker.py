@@ -72,10 +72,6 @@ async def main() -> None:
                 item_id = int(event["item_id"])
                 retry_count = int(event.get("retry_count", 0))
 
-                if item_id == 2:
-                    await asyncio.sleep(5) # Успеть в базу поглядеть
-                    raise Exception("DLQ test")
-
                 item_data = await items_repo.get_item_with_user(item_id)
                 if item_data is None:
                     raise RuntimeError(f"item not found: {item_id}")

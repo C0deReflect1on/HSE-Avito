@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 import json
-import time
 from typing import Any, Protocol
 
 import asyncpg
@@ -8,7 +7,7 @@ from app.schemas import PredictRequest, PredictResponse
 from app.exceptions import WrongItemIdError
 from app.storage.memory import InMemoryStorage
 from app.db import get_pool
-from app.metrics import DB_QUERY_DURATION
+from app.utils.metrics import track_db_insert, track_db_select, track_db_update
 import logging
 
 logger = logging.getLogger(__name__)
@@ -87,28 +86,24 @@ class ModerationRepository:
     
     async def create_pending(self, payload: PredictRequest) -> int:
         pool = get_pool()
-        start_time = time.time()
-        try:
-            task_id = await pool.fetchval(
-                """
-                INSERT INTO moderation_results (item_id, status)
-                VALUES ($1, 'pending')
-                RETURNING id
-                """,
-                payload.item_id,
-            )
-            return int(task_id)
-        except asyncpg.exceptions.ForeignKeyViolationError:
-            raise WrongItemIdError()
-        finally:
-            duration = time.time() - start_time
-            DB_QUERY_DURATION.labels(query_type="insert").observe(duration)
+        async with track_db_insert():
+            try:
+                task_id = await pool.fetchval(
+                    """
+                    INSERT INTO moderation_results (item_id, status)
+                    VALUES ($1, 'pending')
+                    RETURNING id
+                    """,
+                    payload.item_id,
+                )
+                return int(task_id)
+            except asyncpg.exceptions.ForeignKeyViolationError:
+                raise WrongItemIdError()
 
     async def get_by_id(self, task_id: int) -> dict[str, Any] | None:
         logger.info("in get_by_id: %s", task_id)
         pool = get_pool()
-        start_time = time.time()
-        try:
+        async with track_db_select():
             row = await pool.fetchrow(
                 """
                 SELECT
@@ -126,14 +121,10 @@ class ModerationRepository:
                 task_id,
             )
             return dict(row) if row is not None else None
-        finally:
-            duration = time.time() - start_time
-            DB_QUERY_DURATION.labels(query_type="select").observe(duration)
     
     async def update_completed(self, task_id: int, is_violation: bool, probability: float) -> None:
         pool = get_pool()
-        start_time = time.time()
-        try:
+        async with track_db_update():
             await pool.execute(
                 """
                 UPDATE moderation_results
@@ -141,14 +132,10 @@ class ModerationRepository:
                 WHERE id = $1
                 """,
                 task_id, is_violation, probability)
-        finally:
-            duration = time.time() - start_time
-            DB_QUERY_DURATION.labels(query_type="update").observe(duration)
     
     async def update_failed(self, task_id: int, error_message: str) -> None:
         pool = get_pool()
-        start_time = time.time()
-        try:
+        async with track_db_update():
             await pool.execute(
                 """
                 UPDATE moderation_results
@@ -156,14 +143,10 @@ class ModerationRepository:
                 WHERE id = $1
                 """,
                 task_id, error_message)
-        finally:
-            duration = time.time() - start_time
-            DB_QUERY_DURATION.labels(query_type="update").observe(duration)
 
     async def update_status(self, task_id: int, status: str, error: str | None = None) -> None:
         pool = get_pool()
-        start_time = time.time()
-        try:
+        async with track_db_update():
             await pool.execute(
                 """
                 UPDATE moderation_results
@@ -174,9 +157,6 @@ class ModerationRepository:
                 status,
                 error,
             )
-        finally:
-            duration = time.time() - start_time
-            DB_QUERY_DURATION.labels(query_type="update").observe(duration)
 
 
 storage = InMemoryStorage()

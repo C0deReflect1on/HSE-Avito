@@ -19,9 +19,11 @@ def _make_mock_kafka_producer():
     return mock
 
 
+from conftest import db_connection
+
+
 async def _insert_account(database_dsn: str, login: str, password: str, blocked: bool = False) -> None:
-    conn = await asyncpg.connect(database_dsn)
-    try:
+    async with db_connection(database_dsn) as conn:
         await conn.execute(
             """
             INSERT INTO account (login, password, is_blocked)
@@ -31,8 +33,6 @@ async def _insert_account(database_dsn: str, login: str, password: str, blocked:
             hash_password(password),
             blocked,
         )
-    finally:
-        await conn.close()
 
 
 @pytest.fixture
