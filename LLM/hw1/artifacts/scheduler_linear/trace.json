@@ -1,0 +1,15 @@
+{
+  "train_seconds": 583.0171075599985,
+  "eval_seconds": 404.327,
+  "eval_runs_during_training": 10,
+  "total_seconds": 987.3441075599985,
+  "eval_fraction": 0.4095097108537005,
+  "final_eval_seconds": 40.3532,
+  "optimizer_steps": 801,
+  "microbatches": 1602,
+  "tokens_seen": 13123584,
+  "seq_length": 512,
+  "per_device_train_batch_size": 16,
+  "gradient_accumulation_steps": 2,
+  "effective_batch_size": 32
+}

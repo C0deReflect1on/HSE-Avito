@@ -1,0 +1,10 @@
+{
+  "dataset": "wikimedia/wikipedia",
+  "config": "20231101.ru",
+  "split": "train",
+  "tokenizer": "ai-forever/rugpt3small_based_on_gpt2",
+  "max_length": 512,
+  "validation_size": 5000,
+  "num_shards": 32,
+  "num_rows": 1945063
+}
