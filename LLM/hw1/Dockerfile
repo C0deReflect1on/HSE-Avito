@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --upgrade pip \
-    && pip install 'transformers==4.52.0' 'datasets==3.6.0' 'wandb==0.19.10' 'accelerate==1.6.0'
+    && pip install 'transformers==4.52.0' 'datasets==3.6.0' 'wandb==0.19.10' 'accelerate==1.6.0' 'matplotlib==3.10.9'
 
 RUN python3 -m pip install --no-cache-dir --no-build-isolation \
     'flash-attn==2.7.3'
@@ -24,5 +24,6 @@ ENV PATH="$PROJECT_ROOT/bin:$PATH" PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 COPY preprocess.py $PROJECT_ROOT/preprocess.py
 COPY artifacts.py $PROJECT_ROOT/artifacts.py
+COPY plot_logs.py $PROJECT_ROOT/plot_logs.py
 COPY configs $PROJECT_ROOT/configs
 COPY run_hw1.py $PROJECT_ROOT/run_hw1.py

@@ -55,43 +55,12 @@ def write_loss_plot(rows, path):
     points = [point for values in series.values() for point in values]
     if not points:
         return
-    width, height, pad = 800, 400, 48
-    xs = [point[0] for point in points]
-    ys = [point[1] for point in points]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    if max_x == min_x:
-        max_x += 1
-    if max_y == min_y:
-        max_y += 1
+    from plot_logs import write_png
 
-    def project(x, y):
-        px = pad + (x - min_x) / (max_x - min_x) * (width - 2 * pad)
-        py = height - pad - (y - min_y) / (max_y - min_y) * (height - 2 * pad)
-        return px, py
-
-    colors = {"train loss": "#1f77b4", "eval loss": "#d62728"}
-    polylines = []
-    legend = []
-    for index, (name, values) in enumerate(series.items()):
-        if not values:
-            continue
-        coords = " ".join(f"{project(x, y)[0]:.1f},{project(x, y)[1]:.1f}" for x, y in values)
-        polylines.append(
-            f'<polyline fill="none" stroke="{colors[name]}" stroke-width="2" points="{coords}"/>'
-        )
-        legend.append(
-            f'<text x="{pad}" y="{20 + index * 16}" fill="{colors[name]}" font-size="14">{name}</text>'
-        )
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
-        '<rect width="100%" height="100%" fill="white"/>'
-        + "".join(polylines)
-        + "".join(legend)
-        + "</svg>\n"
+    write_png(
+        path, "Обучение и валидация", "Loss", "Шаги оптимизатора",
+        [{"label": name, "points": values} for name, values in series.items()],
     )
-    with open(path, "w", encoding="utf-8") as file:
-        file.write(svg)
 
 
 def prepare_artifact_dir(experiment_name, training_config, config_path):
@@ -178,7 +147,8 @@ def save_experiment_artifacts(
         )
         writer.writeheader()
         writer.writerows(rows)
-    write_loss_plot(rows, os.path.join(output_dir, "loss.svg"))
+    training_history = history[:next(i for i, entry in enumerate(history) if "train_runtime" in entry)]
+    write_loss_plot(loss_rows(training_history), os.path.join(output_dir, "loss.png"))
     finite_perplexity = perplexity if math.isfinite(perplexity) else None
     dump_json(os.path.join(output_dir, "metrics.json"), {
         "eval_loss": float(eval_loss),
@@ -217,6 +187,7 @@ def comparison_runs(artifacts_root=ARTIFACTS_ROOT):
             history = json.load(file)
         with open(config_path, encoding="utf-8") as file:
             saved = json.load(file)
+        history = history[:next(i for i, entry in enumerate(history) if "train_runtime" in entry)]
         training_config = saved.get("training_config", {})
         per_device = training_config.get("per_device_train_batch_size", "?")
         accumulation = training_config.get("gradient_accumulation_steps", 1)
@@ -246,81 +217,28 @@ def comparison_runs(artifacts_root=ARTIFACTS_ROOT):
             "train": train_points,
             "eval": eval_points,
             "final_eval": final_eval,
-            "last_step": train_points[-1][0] if train_points else None,
+            "best_step": min(eval_points, key=lambda point: point[1])[0] if eval_points else None,
         })
-    real_runs = [run for run in runs if not run["name"].startswith("smoke")]
+    real_runs = [run for run in runs if not run["name"].startswith("smoke") and not run["name"].endswith("_subset")]
     return real_runs or runs
 
 
 def plot_comparison(artifacts_root=ARTIFACTS_ROOT, output_path=None):
     """Overlay train-loss curves from finished experiments, with eval markers."""
     runs = [run for run in comparison_runs(artifacts_root) if run["train"]]
-    output_path = output_path or os.path.join(artifacts_root, "comparison.svg")
+    output_path = output_path or os.path.join(artifacts_root, "comparison.png")
     if not runs:
         return None
-    width, height = 960, 560
-    left, right, top, bottom = 70, 280, 50, 50
-    points = [point for run in runs for point in run["train"]]
-    points += [point for run in runs for point in run["eval"]]
-    for run in runs:
-        if run["final_eval"] is not None and run["last_step"] is not None:
-            points.append((run["last_step"], run["final_eval"]))
-    xs = [point[0] for point in points]
-    ys = [point[1] for point in points]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    if max_x == min_x:
-        max_x += 1
-    if max_y == min_y:
-        max_y += 1
-    pad_y = (max_y - min_y) * 0.05
-    min_y -= pad_y
-    max_y += pad_y
+    from plot_logs import write_png
 
-    def project(x, y):
-        px = left + (x - min_x) / (max_x - min_x) * (width - left - right)
-        py = height - bottom - (y - min_y) / (max_y - min_y) * (height - top - bottom)
-        return px, py
-
-    colors = ["#7f7f7f", "#ff7f0e", "#1f77b4", "#2ca02c", "#d62728", "#9467bd"]
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
-        '<rect width="100%" height="100%" fill="white"/>',
-        f'<text x="{width / 2}" y="28" text-anchor="middle" font-size="16">'
-        "Сравнение сходимости претрейна Qwen3-1B за 15 минут (A100)</text>",
-        f'<text x="24" y="{height / 2}" transform="rotate(-90 24 {height / 2})" '
-        'text-anchor="middle" font-size="14">Train Loss</text>',
-        f'<text x="{(left + width - right) / 2}" y="{height - 12}" text-anchor="middle" '
-        'font-size="14">Шаги оптимизации</text>',
-    ]
-    for index, run in enumerate(runs):
-        color = colors[index % len(colors)]
-        coords = " ".join(
-            f"{project(x, y)[0]:.1f},{project(x, y)[1]:.1f}" for x, y in run["train"]
-        )
-        parts.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{coords}"/>'
-        )
-        for x, y in run["eval"]:
-            px, py = project(x, y)
-            parts.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="3.5" fill="{color}"/>')
-        if run["final_eval"] is not None and run["last_step"] is not None:
-            px, py = project(run["last_step"], run["final_eval"])
-            parts.append(
-                f'<rect x="{px - 4:.1f}" y="{py - 4:.1f}" width="8" height="8" fill="{color}"/>'
-            )
-        legend_y = top + index * 22
-        parts.append(
-            f'<line x1="{width - right + 16}" y1="{legend_y}" x2="{width - right + 40}" '
-            f'y2="{legend_y}" stroke="{color}" stroke-width="2"/>'
-        )
-        parts.append(
-            f'<text x="{width - right + 48}" y="{legend_y + 4}" font-size="12">{run["label"]}</text>'
-        )
-    parts.append("</svg>\n")
     os.makedirs(artifacts_root, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as file:
-        file.write("".join(parts))
+    write_png(
+        output_path, "Qwen3-1B: обучение и валидация", "Loss", "Шаги оптимизатора",
+        [{
+            "label": run["label"], "points": run["train"], "marks": run["eval"],
+            "marker": run["final_eval"], "marker_x": run["best_step"],
+        } for run in runs],
+    )
     print(f"Saved comparison plot to {output_path}")
     return output_path
 
