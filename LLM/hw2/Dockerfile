@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --upgrade pip \
     && python3 -m pip install 'transformers==4.56.2' 'datasets==3.6.0' \
-        'accelerate==1.6.0' 'trl==0.23.1' 'liger-kernel==0.6.2' 'jupyterlab==4.4.9'
+        'accelerate==1.6.0' 'trl==0.23.1' 'liger-kernel==0.6.2' \
+        'jupyterlab==4.4.9' 'matplotlib==3.9.2'
 
 RUN python3 -m pip install --no-cache-dir --no-build-isolation \
     'flash-attn==2.7.3'
@@ -21,4 +22,5 @@ ENV HF_DISABLE_TELEMETRY=true \
 
 ENV PATH="$PROJECT_ROOT/bin:$PATH" PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
-COPY train.py communications.ipynb ./
+COPY train.py run_experiments.py plot_results.py test_run_experiments.py collectives.py check.py \
+    communications.ipynb report.md README.md ./
