@@ -1,0 +1,16 @@
+{
+  "screen": {
+    "B0": "results/B0_32x2",
+    "B1": "results/B1_16x4",
+    "B2": "results/B2_32x2",
+    "B3": "results/B3_32x2",
+    "B4": "results/B4_32x2",
+    "B5": "results/B5_16x4"
+  },
+  "finals": {
+    "B4": "results/F_B4_32x2",
+    "B5": "results/F_B5_16x4"
+  },
+  "winner": "B4",
+  "speedup": 3.1650498710456283
+}
