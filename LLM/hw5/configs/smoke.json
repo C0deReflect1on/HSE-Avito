@@ -1,0 +1,19 @@
+{
+  "seed": 42,
+  "max_steps": 5,
+  "dataset_limit": 16,
+  "max_prompt_tokens": 2048,
+  "max_completion_length": 512,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 4,
+  "num_generations": 4,
+  "learning_rate": 0.00002,
+  "temperature": 1.0,
+  "beta": 0.0,
+  "loss_type": "grpo",
+  "scale_rewards": "group",
+  "lora_rank": 8,
+  "lora_alpha": 16,
+  "target_modules": ["q_proj", "v_proj"],
+  "reward_weights": {"exact": 1.0, "functions": 0.2, "format": 0.05}
+}
