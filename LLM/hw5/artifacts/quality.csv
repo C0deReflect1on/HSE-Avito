@@ -1,0 +1,5 @@
+run,overall_%,accuracy_%,correct,total,delta_overall_pp,delta_correct
+rl_lr,69.87,73.14,256,350,0.94,5
+rl_shaped,68.93,72.29,253,350,0.0,2
+baseline,68.93,71.71,251,350,0.0,0
+rl_exact,68.67,71.71,251,350,-0.26,0
