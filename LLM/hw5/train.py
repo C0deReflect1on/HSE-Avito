@@ -1,4 +1,4 @@
-"""A short single-GPU GRPO run. Imports of training dependencies stay on the server."""
+"""Single-GPU GRPO training. Training dependencies are imported on the server."""
 
 import argparse
 import hashlib
@@ -27,9 +27,13 @@ def load_tokenizer():
 
 
 def build_training_rows(examples, tokenizer, max_prompt_tokens):
+    from tqdm.auto import tqdm
+
     rows = []
     skipped = 0
-    for messages, answer, tools in examples:
+    for example_index, (messages, answer, tools) in enumerate(
+        tqdm(examples, desc="Render/tokenize", unit="example")
+    ):
         prompt = render_prompt(messages, tools, tokenizer)
         tokens = tokenizer(prompt, add_special_tokens=False)["input_ids"]
         if len(tokens) > max_prompt_tokens:
@@ -40,28 +44,38 @@ def build_training_rows(examples, tokenizer, max_prompt_tokens):
             "prompt": prompt,
             "answer_json": json.dumps(answer, ensure_ascii=False),
             "tools_json": json.dumps(tools, ensure_ascii=False),
+            "example_index": example_index,
         })
     if not rows:
         raise ValueError("Не осталось примеров после ограничения длины prompt")
     return rows, skipped
 
 
-def load_base_model():
+def load_base_model(language_only=True):
     import torch
-    from transformers import Qwen3_5ForCausalLM, Qwen3_5TextConfig
+    from transformers import Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration, Qwen3_5TextConfig
 
-    config = Qwen3_5TextConfig.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
-    model, loading = Qwen3_5ForCausalLM.from_pretrained(
+    if language_only:
+        config = Qwen3_5TextConfig.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
+        model, loading = Qwen3_5ForCausalLM.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            config=config,
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+            output_loading_info=True,
+        )
+        if loading["missing_keys"]:
+            raise RuntimeError(f"Не загружены веса языковой модели: {loading['missing_keys']}")
+        return model
+
+    # vLLM colocate поднимает полный чекпоинт и ждёт имена model.language_model.*.
+    return Qwen3_5ForConditionalGeneration.from_pretrained(
         MODEL_ID,
         revision=MODEL_REVISION,
-        config=config,
         dtype=torch.bfloat16,
         attn_implementation="sdpa",
-        output_loading_info=True,
     )
-    if loading["missing_keys"]:
-        raise RuntimeError(f"Не загружены веса языковой модели: {loading['missing_keys']}")
-    return model
 
 
 def make_training_reward(output_dir, weights, eos_token_ids, max_completion_length, num_generations):
@@ -74,6 +88,7 @@ def make_training_reward(output_dir, weights, eos_token_ids, max_completion_leng
         nonlocal batch_id
         rewards = []
         rows = []
+        split = kwargs.get("split", ["train"])[0]
         for index, response in enumerate(completions):
             answer = json.loads(answer_json[index])
             tools = json.loads(tools_json[index])
@@ -96,9 +111,11 @@ def make_training_reward(output_dir, weights, eos_token_ids, max_completion_leng
                 "reward": total,
                 "completion_tokens": len(ids),
                 "truncated": truncated,
+                "example_index": kwargs.get("example_index", [None] * len(completions))[index],
                 "gpu_allocated_gib": torch.cuda.memory_allocated() / 1024 ** 3,
             })
-        with (output_dir / "generations.jsonl").open("a", encoding="utf-8") as file:
+        filename = "validation_generations.jsonl" if split == "validation" else "generations.jsonl"
+        with (output_dir / filename).open("a", encoding="utf-8") as file:
             for row in rows:
                 file.write(json.dumps(row, ensure_ascii=False) + "\n")
         batch_id += 1
@@ -107,7 +124,7 @@ def make_training_reward(output_dir, weights, eos_token_ids, max_completion_leng
     return tool_call_reward
 
 
-def run_training(data_path, config_path, output_dir):
+def run_training(data_path, config_path, output_dir, validation_data_path=None):
     import torch
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model
@@ -116,6 +133,8 @@ def run_training(data_path, config_path, output_dir):
 
     if not torch.cuda.is_available():
         raise RuntimeError("Этот запуск требует CUDA GPU")
+    if torch.cuda.device_count() != 1:
+        raise RuntimeError("Оставь одну видимую GPU через CUDA_VISIBLE_DEVICES до запуска Python")
     if not torch.cuda.is_bf16_supported():
         raise RuntimeError("Конфигурация использует bfloat16; нужен GPU с его поддержкой")
     output_dir = Path(output_dir)
@@ -129,7 +148,17 @@ def run_training(data_path, config_path, output_dir):
     )
     random.Random(settings["seed"]).shuffle(rows)
     rows = rows[:settings["dataset_limit"]]
+    for row in rows:
+        row["split"] = "train"
     dataset = Dataset.from_list(rows)
+    validation_dataset = None
+    if validation_data_path:
+        validation_rows, _ = build_training_rows(
+            load_examples(validation_data_path), tokenizer, settings["max_prompt_tokens"]
+        )
+        for row in validation_rows:
+            row["split"] = "validation"
+        validation_dataset = Dataset.from_list(validation_rows)
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
         **settings,
@@ -139,6 +168,7 @@ def run_training(data_path, config_path, output_dir):
         "data_sha256": hashlib.sha256(Path(data_path).read_bytes()).hexdigest(),
         "training_examples": len(rows),
         "skipped_long_prompts": skipped,
+        "validation_examples": len(validation_dataset) if validation_dataset is not None else 0,
         "versions": {name: version(name) for name in ["torch", "transformers", "trl", "peft", "datasets"]},
     }
     (output_dir / "config.json").write_text(json.dumps(metadata, indent=2))
@@ -164,7 +194,8 @@ def run_training(data_path, config_path, output_dir):
     )
     args = GRPOConfig(
         output_dir=str(output_dir),
-        max_steps=settings["max_steps"],
+        max_steps=settings.get("max_steps", -1),
+        num_train_epochs=settings.get("num_train_epochs", 1.0),
         per_device_train_batch_size=settings["per_device_train_batch_size"],
         gradient_accumulation_steps=settings["gradient_accumulation_steps"],
         num_generations=settings["num_generations"],
@@ -182,7 +213,10 @@ def run_training(data_path, config_path, output_dir):
         lr_scheduler_type="constant",
         weight_decay=0.0,
         logging_steps=1,
+        disable_tqdm=False,
         save_strategy="no",
+        eval_strategy="epoch" if validation_dataset is not None else "no",
+        per_device_eval_batch_size=settings["per_device_train_batch_size"],
         report_to="none",
         remove_unused_columns=False,
         seed=settings["seed"],
@@ -190,6 +224,7 @@ def run_training(data_path, config_path, output_dir):
     trainer = GRPOTrainer(
         model=model, args=args, reward_funcs=training_reward,
         train_dataset=dataset, processing_class=tokenizer,
+        eval_dataset=validation_dataset,
     )
     before = {}
     for name, parameter in model.named_parameters():
@@ -200,6 +235,23 @@ def run_training(data_path, config_path, output_dir):
     trainer.train()
     torch.cuda.synchronize()
     train_seconds = time.perf_counter() - start
+    return save_training_results(
+        trainer, output_dir, before, train_seconds,
+        gpu_memory_before=(free_bytes, total_bytes),
+    )
+
+
+def save_training_results(trainer, output_dir, initial_parameters, train_seconds,
+                          gpu_memory_before=None):
+    """Save adapter, metrics and validation scores after an explicit trainer.train()."""
+    import torch
+
+    output_dir = Path(output_dir)
+    model = trainer.model
+    tokenizer = trainer.processing_class
+    validation_dataset = trainer.eval_dataset
+    before = initial_parameters
+    free_bytes, total_bytes = gpu_memory_before or torch.cuda.mem_get_info()
     changed = 0
     delta_squared = 0.0
     for name, parameter in model.named_parameters():
@@ -212,13 +264,16 @@ def run_training(data_path, config_path, output_dir):
     trainer.save_model(str(output_dir / "adapter"))
     tokenizer.save_pretrained(output_dir / "adapter")
     (output_dir / "history.json").write_text(json.dumps(trainer.state.log_history, indent=2))
-    generations = []
-    for line in (output_dir / "generations.jsonl").read_text().splitlines():
-        generations.append(json.loads(line))
     groups = {}
-    for row in generations:
-        key = (row["batch"], row["group"])
-        groups.setdefault(key, []).append(row["reward"])
+    generated_completions = 0
+    truncated_completions = 0
+    with (output_dir / "generations.jsonl").open() as file:
+        for line in file:
+            row = json.loads(line)
+            key = (row["batch"], row["group"])
+            groups.setdefault(key, []).append(row["reward"])
+            generated_completions += 1
+            truncated_completions += row["truncated"]
     varied_groups = sum(max(values) > min(values) for values in groups.values())
     logged_numbers = []
     for entry in trainer.state.log_history:
@@ -235,16 +290,29 @@ def run_training(data_path, config_path, output_dir):
         "peak_reserved_gib": torch.cuda.max_memory_reserved() / 1024 ** 3,
         "train_seconds": train_seconds,
         "optimizer_steps": trainer.state.global_step,
+        "epoch": trainer.state.epoch,
         "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "changed_parameter_tensors": changed,
         "parameter_delta_l2": math.sqrt(delta_squared),
         "reward_groups": len(groups),
         "groups_with_reward_variation": varied_groups,
-        "truncated_completions": sum(row["truncated"] for row in generations),
-        "generated_completions": len(generations),
+        "truncated_completions": truncated_completions,
+        "generated_completions": generated_completions,
         "finite_training_metrics": finite_metrics,
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    if validation_dataset is not None:
+        totals = {"exact": 0.0, "functions": 0.0, "format": 0.0}
+        count = 0
+        with (output_dir / "validation_generations.jsonl").open() as file:
+            for line in file:
+                row = json.loads(line)
+                count += 1
+                for key in totals:
+                    totals[key] += row["scores"][key]
+        validation_metrics = {key: value / count for key, value in totals.items()}
+        validation_metrics.update({"examples": len(validation_dataset), "generations": count})
+        (output_dir / "validation_metrics.json").write_text(json.dumps(validation_metrics, indent=2))
     return summary
 
 
@@ -258,12 +326,19 @@ def export_model(adapter_path, output_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Короткий GRPO-запуск на одном GPU")
+    parser = argparse.ArgumentParser(description="GRPO на одном GPU")
     parser.add_argument("--data", default="data/prepared/train.jsonl")
     parser.add_argument("--config", default="configs/smoke.json")
     parser.add_argument("--output", default="results/smoke")
+    parser.add_argument("--validation-data")
+    parser.add_argument("--export", help="Сохранить объединённую модель для evaluate.py")
     args = parser.parse_args()
-    result = run_training(args.data, args.config, args.output)
+    result = run_training(args.data, args.config, args.output, args.validation_data)
     print(json.dumps(result, indent=2))
-    if result["status"] != "updated":
+    settings = json.loads(Path(args.config).read_text())
+    if not result["finite_training_metrics"] or (
+        settings.get("require_update", True) and result["changed_parameter_tensors"] == 0
+    ):
         raise RuntimeError("Проверка обновления или метрик не прошла; смотри summary.json и generations.jsonl")
+    if args.export:
+        export_model(Path(args.output) / "adapter", args.export)

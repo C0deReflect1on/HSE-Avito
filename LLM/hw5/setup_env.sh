@@ -27,6 +27,9 @@ PYTHON="$SCRIPT_DIR/.venv/bin/python"
     "trl==1.16.0" "transformers==5.9.0" "peft==0.18.1" \
     "datasets==4.7.0" "accelerate==1.10.1" \
     "flash-linear-attention==0.4.1" "ipykernel>=6,<8"
+"$PYTHON" -m pip install \
+    "https://github.com/vllm-project/vllm/releases/download/v0.22.0/vllm-0.22.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl" \
+    --extra-index-url https://download.pytorch.org/whl/cu129
 "$PYTHON" -m pip check
 
 "$PYTHON" - <<'PY'
@@ -47,7 +50,7 @@ if [[ ! -f data/raw/data.json ]]; then
     "$PYTHON" download_data.py
 fi
 
-printf 'Готово. Venv: %s/.venv\n' "$SCRIPT_DIR"
+printf '\nГотово. Venv: %s/.venv\n' "$SCRIPT_DIR"
 printf 'В notebook выбери kernel: Python (hw5)\n'
 printf 'Данные: %s/data/raw/data.json\n' "$SCRIPT_DIR"
 printf 'Далее выполни gpu_smoke.ipynb. Обучение этим скриптом не запускалось.\n'

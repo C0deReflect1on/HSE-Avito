@@ -1,0 +1,4 @@
+run,reward,learning_rate,steps,epoch_fraction,reward_first_20,reward_last_20,zero_advantage_steps,train_seconds,peak_allocated_gib
+rl_exact,exact,2e-05,120,0.0102,0.531,0.438,76,1821.6,52.1
+rl_shaped,shaped,2e-05,120,0.0102,0.739,0.583,54,335.1,73.77
+rl_lr,shaped,1e-05,120,0.0102,0.702,0.618,53,1645.2,51.55
