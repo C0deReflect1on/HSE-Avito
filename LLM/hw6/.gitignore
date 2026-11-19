@@ -1,0 +1,5 @@
+/.hw6_safin_venv/
+/results/
+/.ipynb_checkpoints/
+/__pycache__/
+/.DS_Store
