@@ -1,0 +1,7 @@
+/.hw6_safin_venv/
+.hw6_driver/
+hw6_run.log
+/results/
+/.ipynb_checkpoints/
+/__pycache__/
+/.DS_Store
