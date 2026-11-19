@@ -15,12 +15,14 @@ reset_cache
 trap reset_cache EXIT
 
 rps="$(awk -v rpm="$rpm" 'BEGIN { printf "%.12g", rpm / 60 }')"
+request_count="${REQUEST_COUNT:-$(wc -l < "$data")}"
+warmup="${WARMUP_REQUEST_COUNT:-40}"
 
 aiperf profile --url "$url" --model Qwen/Qwen3-8B \
   --endpoint-type chat --custom-dataset-type raw_payload \
   --input-file "$data" --dataset-sampling-strategy sequential \
-  --warmup-request-count 40 --warmup-concurrency 8 \
-  --request-count "$(wc -l < "$data")" \
+  --warmup-request-count "$warmup" --warmup-concurrency 8 \
+  --request-count "$request_count" \
   --request-rate "$rps" --arrival-pattern constant --random-seed 42 \
   --streaming --request-timeout-seconds 120 \
   --export-level records --export-outputs-json --output-artifact-dir "$output/profile"

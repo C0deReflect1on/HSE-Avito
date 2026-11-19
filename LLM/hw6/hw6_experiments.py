@@ -6,14 +6,12 @@ import json
 import math
 import os
 import signal
+import socket
 import subprocess
-import sys
 import time
 from contextlib import contextmanager, suppress
 from datetime import datetime
-from importlib.metadata import version
 from pathlib import Path
-from shutil import which
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 from uuid import uuid4
@@ -21,6 +19,10 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parent
 DATA_SHA256 = "67c48379e5ae2608f7ca08650fd346facdc01f766a3e8eecea6459d7cec00ebc"
 MODEL = "Qwen/Qwen3-8B"
+IMAGE_TAG = "hw6-safin:v0"
+SERVER_PORT = 18110
+HF_CACHE = Path("/home/edu/.cache/huggingface")
+ALLOWED_GPU = "0"
 FIXED_RPM = 120
 CAPACITY_SECONDS = 300
 SLA_SECONDS = 15
@@ -40,12 +42,86 @@ class MeasurementError(RuntimeError):
     """Запуск или выгрузка не дали пригодного результата."""
 
 
-def image_from_dockerfile():
+def docker_cmd(*args):
+    return ["sudo", "-n", "docker", *args]
+
+
+def base_image_from_dockerfile():
     for line in (ROOT / "Dockerfile").read_text().splitlines():
         fields = line.split()
         if fields and fields[0] == "FROM":
             return fields[1]
     raise MeasurementError("В Dockerfile не найден FROM.")
+
+
+def docker_output(*args, timeout=60):
+    return subprocess.check_output(docker_cmd(*args), text=True, timeout=timeout).strip()
+
+
+def ensure_image():
+    inspect = subprocess.run(
+        docker_cmd("image", "inspect", IMAGE_TAG),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if inspect.returncode != 0:
+        print(f"Сборка {IMAGE_TAG}", flush=True)
+        subprocess.run(docker_cmd("build", "-t", IMAGE_TAG, str(ROOT)), check=True)
+    return IMAGE_TAG
+
+
+def image_toolchain():
+    versions = docker_output(
+        "run", "--rm", "--entrypoint", "/opt/benchmark/bin/python", IMAGE_TAG, "-c",
+        "from importlib.metadata import version\n"
+        "print(version('aiperf'))\n"
+        "print(version('transformers'))\n",
+        timeout=180,
+    ).splitlines()
+    if len(versions) != 2:
+        raise MeasurementError(f"Не удалось прочитать версии в {IMAGE_TAG}: {versions!r}")
+    aiperf, transformers = versions
+    if aiperf != "0.13.0":
+        raise MeasurementError(f"В {IMAGE_TAG} стоит AIPerf {aiperf}, нужен 0.13.0.")
+    curl = docker_output(
+        "run", "--rm", "--entrypoint", "bash", IMAGE_TAG, "-lc", "command -v curl",
+        timeout=60,
+    )
+    if not curl:
+        raise MeasurementError(f"В {IMAGE_TAG} нет curl.")
+    return aiperf, transformers
+
+
+def gpu_info(device):
+    if str(device) != ALLOWED_GPU:
+        raise MeasurementError("Можно занимать только GPU 0.")
+    env = os.environ.copy()
+    env.pop("CUDA_VISIBLE_DEVICES", None)
+    raw = subprocess.check_output([
+        "nvidia-smi", "-i", ALLOWED_GPU,
+        "--query-gpu=uuid,name,memory.total,driver_version", "--format=csv,noheader",
+    ], text=True, timeout=20, env=env).strip()
+    return tuple(field.strip() for field in raw.split(","))
+
+
+def port_is_free(port):
+    """Слушающий сокет занят. TIME_WAIT после AIPerf портом не считается."""
+    with socket.socket() as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def wait_until_port_free(port, timeout=120):
+    deadline = time.monotonic() + timeout
+    while True:
+        if port_is_free(port):
+            return
+        if time.monotonic() >= deadline:
+            raise MeasurementError(f"Порт 127.0.0.1:{port} не освободился за {timeout} с.")
+        time.sleep(2)
 
 
 def write_json(path, value):
@@ -54,15 +130,11 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def docker_output(*args):
-    return subprocess.check_output(["docker", *args], text=True, timeout=60).strip()
-
-
-def run_logged(command, log_path, env, timeout):
+def run_logged(command, log_path, timeout, on_cancel=None):
     """Записывает вывод и останавливает группу процессов при прерывании ноутбука."""
     with log_path.open("wb") as log:
         process = subprocess.Popen(
-            command, cwd=ROOT, env=env, stdout=log,
+            command, cwd=ROOT, stdout=log,
             stderr=subprocess.STDOUT, start_new_session=True,
         )
         try:
@@ -77,6 +149,9 @@ def run_logged(command, log_path, env, timeout):
                     with suppress(ProcessLookupError):
                         os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+                if on_cancel:
+                    with suppress(Exception):
+                        on_cancel()
 
 
 def read_measurement(profile, expected, rpm, duration):
@@ -179,75 +254,115 @@ class Experiment:
         if max_capacity_rpm < FIXED_RPM or max_capacity_rpm % CAPACITY_STEP:
             raise ValueError(f"Предел SLA должен быть ≥ {FIXED_RPM} и кратен {CAPACITY_STEP} RPM.")
 
-        if version("aiperf") != "0.13.0":
-            raise MeasurementError("Выберите ядро Python (hw6_safin) с AIPerf 0.13.0.")
-        if which("curl") is None:
-            raise MeasurementError("Для сброса кеша между замерами нужен curl на сервере.")
+        if not HF_CACHE.is_dir():
+            raise MeasurementError(f"Нет кэша Hugging Face: {HF_CACHE}")
         data = (ROOT / "data/requests.jsonl").read_bytes()
         dataset_hash = hashlib.sha256(data).hexdigest()
         if dataset_hash != DATA_SHA256:
             raise MeasurementError("Проверьте исходный data/requests.jsonl. Его SHA-256 отличается.")
         self.request_count = len(data.splitlines())
-        self.image = image_from_dockerfile()
-        gpu = subprocess.check_output([
-            "nvidia-smi", "-i", str(gpu_device),
-            "--query-gpu=uuid,name,memory.total,driver_version", "--format=csv,noheader",
-        ], text=True, timeout=20).strip()
-        self.gpu_uuid, gpu_name, gpu_memory, gpu_driver = (field.strip() for field in gpu.split(","))
+        resume = os.environ.get("HW6_RESUME")
+        self.resume = Path(resume).resolve() if resume else None
+        if self.resume:
+            meta = json.loads((self.resume / "environment.json").read_text())
+            self.short = str(meta.get("profile", "")).startswith("short")
+            self.bench_requests = int(meta["bench_requests"])
+            self.warmup_requests = int(meta["warmup_requests"])
+            self._resume_meta = meta
+        else:
+            self.short = os.environ.get("HW6_SHORT") == "1"
+            self.bench_requests = int(os.environ.get("HW6_REQUESTS") or (120 if self.short else self.request_count))
+            self.warmup_requests = int(os.environ.get("HW6_WARMUP") or (8 if self.short else 40))
+            self._resume_meta = None
+        if not 1 <= self.bench_requests <= self.request_count:
+            raise MeasurementError("HW6_REQUESTS должен быть от 1 до числа строк датасета.")
+        self.image = ensure_image()
+        self.base_image = base_image_from_dockerfile()
+        aiperf, transformers = image_toolchain()
+        self.gpu_uuid, gpu_name, gpu_memory, gpu_driver = gpu_info(gpu_device)
+        self.container = None
 
-        self.directory = ROOT / "results" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        self.directory.mkdir(parents=True)
-        self.rows = []
-        self.client_env = os.environ.copy()
-        aiperf_bin = Path(sys.executable).parent
-        self.client_env["PATH"] = os.pathsep.join([str(aiperf_bin), os.environ.get("PATH", "")])
-        no_proxy = ",".join(filter(None, ["127.0.0.1,localhost", os.environ.get("NO_PROXY")]))
-        self.client_env["NO_PROXY"] = no_proxy
-        self.client_env["no_proxy"] = no_proxy
-        write_json(self.directory / "environment.json", {
+        if self.resume:
+            self.directory = self.resume
+            self.rows = json.loads((self.directory / "results.json").read_text())
+            self._resume_meta["profile"] = "short+2"
+            write_json(self.directory / "environment.json", self._resume_meta)
+        else:
+            self.directory = ROOT / "results" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            self.directory.mkdir(parents=True)
+            self.rows = []
+            write_json(self.directory / "environment.json", {
             "model": MODEL,
-            "vllm_image": self.image,
-            "aiperf": version("aiperf"),
-            "transformers": version("transformers"),
+            "vllm_image": self.base_image,
+            "runtime_image": self.image,
+            "aiperf": aiperf,
+            "transformers": transformers,
+            "gpu_index": ALLOWED_GPU,
             "gpu_name": gpu_name,
             "gpu_memory": gpu_memory,
             "gpu_driver": gpu_driver,
             "gpu_uuid": self.gpu_uuid,
             "dataset_sha256": dataset_hash,
             "dataset_requests": self.request_count,
+            "profile": "short" if self.short else "full",
+            "bench_requests": self.bench_requests,
+            "warmup_requests": self.warmup_requests,
             "fixed_rpm": FIXED_RPM,
             "spec_rpms": self.spec_rpms,
             "capacity_seconds": CAPACITY_SECONDS,
             "capacity_step_rpm": CAPACITY_STEP,
             "max_capacity_rpm": self.max_capacity_rpm,
             "sla_p90_s": SLA_SECONDS,
-        })
-        print(f"{gpu_name} ({gpu_memory}). Результаты: {self.directory}", flush=True)
+            })
+        print(
+            f"GPU {ALLOWED_GPU}: {gpu_name} ({gpu_memory}), {self.gpu_uuid}. "
+            f"Результаты: {self.directory}",
+            flush=True,
+        )
+        if self.resume:
+            print("Продолжаю ту же папку: prefill_2048 и baseline_ngram5.", flush=True)
+        elif self.short:
+            print(
+                f"Короткий прогон: 3 конфига, {self.bench_requests} запросов, "
+                f"прогрев {self.warmup_requests}. Цель около 20 минут.",
+                flush=True,
+            )
+
+    def stop_aiperf(self):
+        if not self.container:
+            return
+        subprocess.run(
+            docker_cmd(
+                "exec", self.container, "bash", "-lc",
+                "if command -v pkill >/dev/null; then pkill -f 'aiperf profile' || true; fi",
+            ),
+            capture_output=True, check=False, timeout=30,
+        )
 
     @contextmanager
     def server(self, phase, config, args):
+        wait_until_port_free(SERVER_PORT)
         log_dir = self.directory / "logs" / phase
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"{config}-vllm.log"
         name = f"hw6-safin-{uuid4().hex[:12]}"
-        command = [
-            "docker", "run", "--detach", "--name", name,
-            "--gpus", f"device={self.gpu_uuid}", "--ipc", "host",
-            "--publish", "127.0.0.1::8000",
-            "--mount", "type=volume,source=hw6-safin-huggingface,target=/root/.cache/huggingface",
+        self.container = name
+        url = f"http://127.0.0.1:{SERVER_PORT}"
+        command = docker_cmd(
+            "run", "--detach", "--name", name,
+            "--gpus", f"device={self.gpu_uuid}", "--ipc", "host", "--network", "host",
+            "--mount", f"type=bind,source={ROOT},target={ROOT}",
+            "--mount", f"type=bind,source={HF_CACHE},target=/root/.cache/huggingface",
             "--env", "HF_HOME=/root/.cache/huggingface",
-            "--mount", f"type=bind,source={ROOT / 'serve.sh'},target=/tmp/hw6-serve.sh,readonly",
             "--entrypoint", "bash", self.image,
-            "/tmp/hw6-serve.sh", "--host", "0.0.0.0", "--port", "8000", *args,
-        ]
-        print(f"{phase} / {config}: запуск vLLM", flush=True)
+            str(ROOT / "serve.sh"), "--host", "127.0.0.1", "--port", str(SERVER_PORT), *args,
+        )
+        print(f"{phase} / {config}: запуск vLLM на GPU {ALLOWED_GPU}", flush=True)
         started = False
         try:
             with log_path.open("wb") as log:
-                subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+                subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
             started = True
-            address = docker_output("port", name, "8000/tcp").splitlines()[0]
-            url = f"http://{address}"
             opener = build_opener(ProxyHandler({}))
             deadline = time.monotonic() + 3600
             while time.monotonic() < deadline:
@@ -257,7 +372,7 @@ class Experiment:
                     with opener.open(f"{url}/version", timeout=5) as response:
                         actual_version = json.load(response)["version"]
                     break
-                except (URLError, ConnectionError, TimeoutError):
+                except (URLError, ConnectionError, TimeoutError, json.JSONDecodeError):
                     if docker_output("inspect", "--format", "{{.State.Running}}", name) != "true":
                         raise MeasurementError(f"vLLM завершился при запуске. Лог: {log_path}") from None
                     time.sleep(3)
@@ -266,20 +381,24 @@ class Experiment:
 
             if actual_version.split("+", 1)[0] != "0.22.0":
                 raise MeasurementError(f"Ожидался vLLM 0.22.0, получен {actual_version}.")
+            print(f"{phase} / {config}: vLLM готов, {url}", flush=True)
             yield url
         finally:
             try:
                 if started:
                     with log_path.open("ab") as log:
                         subprocess.run(
-                            ["docker", "logs", name], stdout=log,
+                            docker_cmd("logs", name), stdout=log,
                             stderr=subprocess.STDOUT, timeout=30, check=False,
                         )
             finally:
+                self.container = None
                 subprocess.run(
-                    ["docker", "rm", "-f", name], capture_output=True,
-                    check=False, timeout=30,
+                    docker_cmd("rm", "-f", name), capture_output=True,
+                    check=False, timeout=60,
                 )
+                with suppress(MeasurementError):
+                    wait_until_port_free(SERVER_PORT)
 
     def save(self, row):
         self.rows.append(row)
@@ -297,7 +416,7 @@ class Experiment:
         output = self.directory / phase / config / f"{rpm}rpm"
         log = self.directory / "logs" / phase / f"{config}-{rpm}rpm-aiperf.log"
         duration = CAPACITY_SECONDS if phase == "capacity" else None
-        expected = rpm * duration // 60 if duration else self.request_count
+        expected = rpm * duration // 60 if duration else self.bench_requests
         row = {
             "phase": phase, "config": config, "engine_args": args, "rpm": rpm,
             "duration_s": duration, "expected_attempted": expected,
@@ -307,11 +426,22 @@ class Experiment:
         print(f"{phase} / {config} / {rpm} RPM: замер", flush=True)
         try:
             if duration:
-                command = ["bash", "load_test.sh", str(rpm), str(output)]
+                inner = ["bash", str(ROOT / "load_test.sh"), str(rpm), str(output)]
             else:
-                command = ["bash", "benchmark.sh", str(output), str(rpm)]
+                inner = ["bash", str(ROOT / "benchmark.sh"), str(output), str(rpm)]
+            command = docker_cmd(
+                "exec",
+                "-e", f"URL={url}",
+                "-e", f"REQUEST_COUNT={self.bench_requests}",
+                "-e", f"WARMUP_REQUEST_COUNT={self.warmup_requests}",
+                "-e", "NO_PROXY=127.0.0.1,localhost",
+                "-e", "no_proxy=127.0.0.1,localhost",
+                "-w", str(ROOT),
+                self.container,
+                *inner,
+            )
             timeout = 600 + (duration or expected * 60 / rpm)
-            returncode = run_logged(command, log, {**self.client_env, "URL": url}, timeout)
+            returncode = run_logged(command, log, timeout, on_cancel=self.stop_aiperf)
             row["exit_code"] = returncode
             row.update(read_measurement(output / "profile", expected, rpm, duration))
             if returncode or not row["on_schedule"]:
@@ -356,6 +486,12 @@ class Experiment:
         self.measure_config("fixed", "baseline", PLAIN_CONFIGS["baseline"], [FIXED_RPM])
         if best_fixed(self.rows, {"baseline"}) is None:
             raise MeasurementError(f"Не получен валидный замер бейзлайна. Логи в {self.directory / 'logs'}.")
+        if self.short:
+            self.measure_config(
+                "fixed", "prefill_4096_seqs_32", PLAIN_CONFIGS["prefill_4096_seqs_32"], [FIXED_RPM],
+            )
+            self.measure_config("fixed", "baseline_ngram3", ngram_args(3), [FIXED_RPM])
+            return best_fixed(self.rows)
 
         for config in PLAIN_CONFIGS:
             if config != "baseline":
@@ -369,6 +505,21 @@ class Experiment:
             config = f"{best_plain['config']}_{best_spec['config'].removeprefix('baseline_')}"
             args = [*best_plain["engine_args"], *best_spec["engine_args"]]
             self.measure_config("fixed", config, args, [FIXED_RPM])
+        return best_fixed(self.rows)
+
+    def run_extra(self):
+        """Два дополнительных конфига в уже начатую папку короткого прогона."""
+        done = {
+            row["config"] for row in self.rows
+            if row.get("phase") == "fixed" and row.get("status") == "ok"
+        }
+        if "baseline" not in done:
+            raise MeasurementError(f"В {self.directory} нет валидного baseline.")
+        print("Дописываю prefill_2048 и baseline_ngram5.", flush=True)
+        if "prefill_2048" not in done:
+            self.measure_config("fixed", "prefill_2048", PLAIN_CONFIGS["prefill_2048"], [FIXED_RPM])
+        if "baseline_ngram5" not in done:
+            self.measure_config("fixed", "baseline_ngram5", ngram_args(5), [FIXED_RPM])
         return best_fixed(self.rows)
 
     def run_spec(self):
@@ -393,3 +544,28 @@ class Experiment:
                 return row["sla_pass"]
 
             search_capacity(check, self.max_capacity_rpm)
+
+
+def main():
+    experiment = Experiment(ALLOWED_GPU, [60, 120, 240, 480, 960, 1920], 3840)
+    try:
+        if experiment.resume:
+            winner = experiment.run_extra()
+        else:
+            winner = experiment.run_fixed()
+        if winner:
+            print(
+                f"{winner['config']}: {winner['speedup_vs_baseline']:.3f}× к бейзлайну",
+                flush=True,
+            )
+        if not experiment.short:
+            experiment.run_spec()
+            if best_fixed(experiment.rows):
+                experiment.run_capacity()
+    finally:
+        from hw6_results import write_results
+        print(write_results(experiment.directory), flush=True)
+
+
+if __name__ == "__main__":
+    main()

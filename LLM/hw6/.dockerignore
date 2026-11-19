@@ -1,0 +1,7 @@
+.hw6_safin_venv
+.hw6_driver
+results
+hw6_run.log
+__pycache__
+**/*.pyc
+.ipynb_checkpoints
