@@ -13,6 +13,7 @@ from contextlib import contextmanager, suppress
 from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
+from shutil import which
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 from uuid import uuid4
@@ -180,6 +181,8 @@ class Experiment:
 
         if version("aiperf") != "0.13.0":
             raise MeasurementError("Выберите ядро Python (hw6_safin) с AIPerf 0.13.0.")
+        if which("curl") is None:
+            raise MeasurementError("Для сброса кеша между замерами нужен curl на сервере.")
         data = (ROOT / "data/requests.jsonl").read_bytes()
         dataset_hash = hashlib.sha256(data).hexdigest()
         if dataset_hash != DATA_SHA256:
@@ -232,6 +235,7 @@ class Experiment:
             "--gpus", f"device={self.gpu_uuid}", "--ipc", "host",
             "--publish", "127.0.0.1::8000",
             "--mount", "type=volume,source=hw6-safin-huggingface,target=/root/.cache/huggingface",
+            "--env", "HF_HOME=/root/.cache/huggingface",
             "--mount", f"type=bind,source={ROOT / 'serve.sh'},target=/tmp/hw6-serve.sh,readonly",
             "--entrypoint", "bash", self.image,
             "/tmp/hw6-serve.sh", "--host", "0.0.0.0", "--port", "8000", *args,
@@ -249,16 +253,17 @@ class Experiment:
             while time.monotonic() < deadline:
                 try:
                     with opener.open(f"{url}/health", timeout=2):
-                        break
-                except (URLError, TimeoutError):
+                        pass
+                    with opener.open(f"{url}/version", timeout=5) as response:
+                        actual_version = json.load(response)["version"]
+                    break
+                except (URLError, ConnectionError, TimeoutError):
                     if docker_output("inspect", "--format", "{{.State.Running}}", name) != "true":
                         raise MeasurementError(f"vLLM завершился при запуске. Лог: {log_path}") from None
                     time.sleep(3)
             else:
                 raise MeasurementError(f"vLLM не запустился за час. Лог: {log_path}")
 
-            with opener.open(f"{url}/version", timeout=5) as response:
-                actual_version = json.load(response)["version"]
             if actual_version.split("+", 1)[0] != "0.22.0":
                 raise MeasurementError(f"Ожидался vLLM 0.22.0, получен {actual_version}.")
             yield url
