@@ -137,21 +137,21 @@ P90 E2E у `prefill_4096_seqs_32` тоже наименьший.
 
 Mean E2E и P90 E2E при 120 RPM:
 
-![Mean E2E и P90 E2E при 120 RPM](results/20261119-232509-302829/comparison_latency.png)
+![Mean E2E и P90 E2E при 120 RPM](figures/comparison_latency.png)
 
 Три конфигурации без n-gram дают почти одну задержку E2E.
 Две конфигурации n-gram дают большую задержку E2E.
 
 Ускорение к baseline. Горизонтальная линия показывает S = 1.
 
-![Ускорение к baseline при 120 RPM](results/20261119-232509-302829/comparison_speedup.png)
+![Ускорение к baseline при 120 RPM](figures/comparison_speedup.png)
 
 Зелёный столбец показывает S ≥ 1.
 Красный столбец показывает S < 1.
 
 Средняя длина ответа при 120 RPM:
 
-![Средняя длина ответа при 120 RPM](results/20261119-232509-302829/comparison_tokens.png)
+![Средняя длина ответа при 120 RPM](figures/comparison_tokens.png)
 
 Средняя длина ответа лежит в диапазоне 418,9–425,2 токена.
 Разброс равен 6,3 токена. Это около 1,5 % от длины baseline.
@@ -168,7 +168,7 @@ Mean E2E и P90 E2E при 120 RPM:
 
 P90 baseline и n-gram. Пустая точка на оси означает пропуск замера.
 
-![P90 baseline и baseline_ngram5](results/20261119-232509-302829/spec_p90.png)
+![P90 baseline и baseline_ngram5](figures/spec_p90.png)
 
 При 120 RPM P90 n-gram выше P90 baseline на 2,278 с.
 Эта точка — единственный измеренный RPM, где n-gram медленнее baseline по P90 E2E.
